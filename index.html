@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VRM/GLB to VCI Converter (v4.3)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Import Map for stable module loading -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.154.0/examples/jsm/",
+            "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@2.0.0/lib/three-vrm.module.js"
+        }
+    }
+    </script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .drag-active { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; } /* gray-800 */
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        /* Preview Canvas Container */
+        #three-container {
+            width: 100%;
+            height: 400px;
+            background-color: #e5e7eb; /* gray-200 */
+            border-radius: 0.5rem;
+            overflow: hidden;
+            position: relative;
+        }
+        canvas { display: block; width: 100%; height: 100%; outline: none; }
+
+        /* --- Toggle Switch Logic --- */
+        input:checked ~ .check-bg {
+            background-color: #3b82f6;
+        }
+        input:checked ~ .dot {
+            transform: translateX(1.25rem); 
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
+
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v4.3 (Log & DL Fix)</span></h1>
+        <p class="text-gray-600 mb-6 text-sm">
+            VRM/GLBをVCIに変換します。
+        </p>
+
+        <!-- 1. Upload & Viewer Zone -->
+        <div class="mb-8">
+            <!-- Drop Zone -->
+            <div id="drop-zone" class="w-full border-2 border-dashed border-gray-300 rounded-lg p-8 text-center transition-colors cursor-pointer hover:bg-gray-50 relative group z-10">
+                <div id="drop-content" class="group-hover:scale-105 transition-transform duration-200">
+                    <i class="fas fa-cube text-5xl text-gray-400 mb-3"></i>
+                    <p class="text-gray-600 font-bold text-lg">1. VRM / GLB ファイルをここにドロップ</p>
+                    <p class="text-gray-400 text-sm">またはクリックしてファイルを選択</p>
+                </div>
+                <input type="file" id="file-input" accept=".glb,.vrm" class="hidden">
+            </div>
+
+            <!-- Viewer Section -->
+            <div id="viewer-section" class="hidden mt-4 bg-gray-100 rounded-lg p-2 border border-gray-200 relative animate-fade-in">
+                <div class="absolute top-4 right-4 z-10 flex space-x-2">
+                    <button id="change-file-btn" class="bg-white bg-opacity-90 hover:bg-opacity-100 text-gray-700 px-4 py-2 rounded shadow text-xs font-bold transition-all flex items-center">
+                        <i class="fas fa-sync-alt mr-2"></i>ファイルを変更
+                    </button>
+                </div>
+                
+                <!-- Three.js Canvas -->
+                <div id="three-container"></div>
+
+                <div class="bg-white p-2 mt-2 rounded border border-gray-200 flex items-center justify-center space-x-2">
+                    <i class="fas fa-check-circle text-green-500"></i>
+                    <p class="text-center text-sm text-gray-700 font-bold" id="preview-filename">filename.vrm</p>
+                </div>
+                <p class="text-center text-[10px] text-gray-400 mt-1">操作: 左クリック回転 / 右クリック移動 / ホイール拡大</p>
+            </div>
+        </div>
+
+        <!-- Settings Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Left Column: Basic Meta -->
+            <div class="flex flex-col gap-6">
+                <div class="bg-purple-50 p-5 rounded-lg border border-purple-100 flex-1">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide border-b border-purple-200 pb-2">
+                        <i class="fas fa-info-circle mr-1"></i> 2. メタデータ設定
+                    </h3>
+                    
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-gray-600 text-xs font-bold mb-1">Title <span class="text-red-400">*</span></label>
+                            <input type="text" id="meta-title" placeholder="アイテム名" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Version</label>
+                                <input type="text" id="meta-version" value="1.0" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Author</label>
+                                <input type="text" id="meta-author" placeholder="作成者" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Contact Information</label>
+                                <input type="text" id="meta-contact" placeholder="連絡先 (Twitter等)" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Reference</label>
+                                <input type="text" id="meta-reference" placeholder="参照URL" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-gray-600 text-xs font-bold mb-1">Description</label>
+                            <textarea id="meta-description" rows="3" placeholder="アイテムの説明文" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500 resize-none"></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-gray-600 text-xs font-bold mb-1">Thumbnail</label>
+                            <div id="thumb-drop-zone" class="w-full border-2 border-dashed border-gray-300 rounded-lg p-3 transition-colors hover:bg-white cursor-pointer group bg-white bg-opacity-60">
+                                <div class="flex items-center space-x-4">
+                                    <div class="w-16 h-16 bg-gray-200 rounded border border-gray-300 overflow-hidden flex-shrink-0 relative">
+                                        <img id="thumb-preview" class="w-full h-full object-cover hidden">
+                                        <div id="thumb-placeholder" class="w-full h-full flex items-center justify-center text-gray-400 group-hover:text-purple-500 transition-colors">
+                                            <i class="fas fa-image text-xl"></i>
+                                        </div>
+                                    </div>
+                                    <div class="flex-1">
+                                        <p class="text-xs font-bold text-gray-600 group-hover:text-purple-600">サムネイル画像を選択</p>
+                                        <p class="text-[10px] text-gray-400">クリックまたはドロップ (推奨: 正方形)</p>
+                                    </div>
+                                </div>
+                                <input type="file" id="thumb-input" accept="image/png, image/jpeg" class="hidden">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: License & Behavior -->
+            <div class="flex flex-col gap-6">
+                
+                <!-- 3. License Settings -->
+                <div class="bg-orange-50 p-5 rounded-lg border border-orange-100">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide border-b border-orange-200 pb-2">
+                        <i class="fas fa-file-contract mr-1"></i> 3. ライセンス・スクリプト設定
+                    </h3>
+                    
+                    <div class="space-y-4">
+                        <!-- Model License -->
+                        <div class="bg-white bg-opacity-50 p-3 rounded border border-orange-100">
+                            <p class="text-xs font-bold text-gray-500 mb-2">Model Data License</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                <select id="license-model-type" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white">
+                                    <option value="redistribution_prohibited">Redistribution_Prohibited</option>
+                                    <option value="cc0" selected>CC0</option>
+                                    <option value="cc_by">CC_BY</option>
+                                    <option value="cc_by_nc">CC_BY_NC</option>
+                                    <option value="cc_by_sa">CC_BY_SA</option>
+                                    <option value="cc_by_nc_sa">CC_BY_NC_SA</option>
+                                    <option value="cc_by_nd">CC_BY_ND</option>
+                                    <option value="cc_by_nc_nd">CC_BY_NC_ND</option>
+                                    <option value="other">Other</option>
+                                </select>
+                                <input type="text" id="license-model-url" placeholder="Other License URL" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs">
+                            </div>
+                        </div>
+
+                        <!-- Script License -->
+                        <div class="bg-white bg-opacity-50 p-3 rounded border border-orange-100">
+                            <p class="text-xs font-bold text-gray-500 mb-2">Script License</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                <select id="license-script-type" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white">
+                                    <option value="redistribution_prohibited">Redistribution_Prohibited</option>
+                                    <option value="cc0" selected>CC0</option>
+                                    <option value="cc_by">CC_BY</option>
+                                    <option value="cc_by_nc">CC_BY_NC</option>
+                                    <option value="cc_by_sa">CC_BY_SA</option>
+                                    <option value="cc_by_nc_sa">CC_BY_NC_SA</option>
+                                    <option value="cc_by_nd">CC_BY_ND</option>
+                                    <option value="cc_by_nc_nd">CC_BY_NC_ND</option>
+                                    <option value="other">Other</option>
+                                </select>
+                                <input type="text" id="license-script-url" placeholder="Other License URL" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs">
+                            </div>
+                            
+                            <!-- Script Flags -->
+                            <div class="flex items-center space-x-4 mt-2 border-t border-dashed border-orange-200 pt-2">
+                                <label class="flex items-center space-x-2 cursor-pointer relative z-10">
+                                    <input type="checkbox" id="script-protected" class="form-checkbox h-3 w-3 text-orange-500 rounded border-gray-300">
+                                    <span class="text-xs text-gray-600">Write Protected</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer relative z-10">
+                                    <input type="checkbox" id="script-debugging" class="form-checkbox h-3 w-3 text-orange-500 rounded border-gray-300">
+                                    <span class="text-xs text-gray-600">Enable Debugging</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Behavior Settings -->
+                <div class="bg-blue-50 p-5 rounded-lg border border-blue-100 flex-1">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide border-b border-blue-200 pb-2">
+                        <i class="fas fa-cogs mr-1"></i> 4. 動作・物理設定
+                    </h3>
+                    
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Collider Layer</label>
+                                <select id="layer-select" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white">
+                                    <option value="Default">Default</option>
+                                    <option value="Location">Location</option>
+                                    <option value="VCIAccessory">VCIAccessory</option>
+                                    <option value="VCIItem">VCIItem</option>
+                                    <option value="VCIPickUp" selected>VCIPickUp (Default)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Scale (倍率)</label>
+                                <div class="flex items-center">
+                                    <input type="number" id="scale-input" value="1.0" step="0.1" min="0.01" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs">
+                                    <span class="ml-1 text-xs text-gray-500">x</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-2">
+                            <!-- 拡縮: ON -->
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">拡縮 (Scalable)</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="scaling-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label id="uniform-scaling-label" class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10 transition-opacity duration-200">
+                                <span class="text-xs text-gray-600">等倍拡縮 (Uniform)</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="uniform-scaling-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Is Kinematic</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="kinematic-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Is Trigger</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="trigger-toggle" class="sr-only">
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Use Gravity</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="gravity-toggle" class="sr-only">
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 5: Action -->
+        <div id="action-section" class="hidden w-full mt-4 animate-fade-in pb-10">
+            <button id="convert-btn" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold py-4 px-8 rounded-lg shadow-lg transform transition hover:-translate-y-1 flex items-center justify-center gap-2 text-lg">
+                <i class="fas fa-magic"></i>
+                <span>変換を実行する</span>
+            </button>
+        </div>
+
+        <!-- Logs & Result -->
+        <!-- Fix: ログ表示部分の構造を修正して、ヘッダーとコンテンツを分離 -->
+        <div id="log-wrapper" class="hidden mt-6 bg-gray-900 p-4 rounded-md w-full mb-4">
+            <div class="font-bold text-white mb-2 border-b border-gray-700 pb-1 text-xs font-mono">処理ログ</div>
+            <div id="logs" class="text-green-400 font-mono text-xs h-32 overflow-y-auto shadow-inner"></div>
+        </div>
+
+        <div id="result-section" class="hidden mt-2 text-center w-full pb-10">
+            <button id="download-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transform transition hover:-translate-y-1 flex items-center justify-center mx-auto gap-2">
+                <i class="fas fa-download"></i>
+                <span>VCIファイルをダウンロード</span>
+            </button>
+            <p class="text-xs text-gray-500 mt-2" id="file-info"></p>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+        // --- Globals for Three.js ---
+        let scene, camera, renderer, controls, currentModel;
+        let threeInitialized = false;
+
+        // DOM Elements
+        const dropZone = document.getElementById('drop-zone');
+        const dropContent = document.getElementById('drop-content');
+        const viewerSection = document.getElementById('viewer-section');
+        const threeContainer = document.getElementById('three-container');
+        const changeFileBtn = document.getElementById('change-file-btn');
+        const fileInput = document.getElementById('file-input');
+        const previewFilename = document.getElementById('preview-filename');
+        const actionSection = document.getElementById('action-section');
+        const convertBtn = document.getElementById('convert-btn');
+
+        const logWrapper = document.getElementById('log-wrapper');
+        const logs = document.getElementById('logs');
+        const resultSection = document.getElementById('result-section');
+        const downloadBtn = document.getElementById('download-btn');
+        const fileInfo = document.getElementById('file-info');
+
+        // Settings (omitted same as before)
+        const layerSelect = document.getElementById('layer-select');
+        const scalingToggle = document.getElementById('scaling-toggle');
+        const uniformScalingToggle = document.getElementById('uniform-scaling-toggle'); 
+        const uniformScalingLabel = document.getElementById('uniform-scaling-label'); 
+        const kinematicToggle = document.getElementById('kinematic-toggle');
+        const gravityToggle = document.getElementById('gravity-toggle');
+        const triggerToggle = document.getElementById('trigger-toggle');
+        const scaleInput = document.getElementById('scale-input');
+        
+        const metaTitle = document.getElementById('meta-title');
+        const metaVersion = document.getElementById('meta-version');
+        const metaAuthor = document.getElementById('meta-author');
+        const metaContact = document.getElementById('meta-contact');
+        const metaReference = document.getElementById('meta-reference');
+        const metaDescription = document.getElementById('meta-description');
+        
+        const thumbDropZone = document.getElementById('thumb-drop-zone');
+        const thumbInput = document.getElementById('thumb-input');
+        const thumbPreview = document.getElementById('thumb-preview');
+        const thumbPlaceholder = document.getElementById('thumb-placeholder');
+
+        const licenseModelType = document.getElementById('license-model-type');
+        const licenseModelUrl = document.getElementById('license-model-url');
+        const licenseScriptType = document.getElementById('license-script-type');
+        const licenseScriptUrl = document.getElementById('license-script-url');
+        const scriptProtected = document.getElementById('script-protected');
+        const scriptDebugging = document.getElementById('script-debugging');
+
+        let selectedFile = null;
+        let selectedThumbFile = null;
+        let generatedBlob = null;
+        let generatedFileName = "";
+
+        // --- Initialization ---
+        function onWindowResize() {
+            if (!renderer || !camera) return;
+            const width = threeContainer.clientWidth || threeContainer.offsetWidth || 640;
+            const height = threeContainer.clientHeight || threeContainer.offsetHeight || 400;
+            
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xe5e7eb); // Gray-200 match
+
+            // Lights
+            const light = new THREE.DirectionalLight(0xffffff);
+            light.position.set(1.0, 1.0, 1.0).normalize();
+            scene.add(light);
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+
+            camera = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
+            camera.position.set(0, 1.0, 3.0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.outputEncoding = THREE.sRGBEncoding; 
+            renderer.setPixelRatio(window.devicePixelRatio);
+            threeContainer.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1.0, 0);
+            controls.update();
+
+            window.addEventListener('resize', onWindowResize);
+            onWindowResize();
+            threeInitialized = true;
+            
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(currentModel && currentModel.update) currentModel.update(0.016);
+            renderer.render(scene, camera);
+        }
+
+        // --- Event Listeners ---
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+        });
+        dropZone.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files), false);
+
+        changeFileBtn.addEventListener('click', () => {
+            fileInput.value = '';
+            fileInput.click();
+        });
+
+        thumbDropZone.addEventListener('click', () => thumbInput.click());
+        thumbInput.addEventListener('change', (e) => handleThumbFiles(e.target.files));
+
+        function updateScalableSettings() {
+            if (scalingToggle.checked) {
+                uniformScalingToggle.disabled = false;
+                uniformScalingLabel.classList.remove('opacity-50', 'pointer-events-none');
+            } else {
+                uniformScalingToggle.disabled = true;
+                uniformScalingLabel.classList.add('opacity-50', 'pointer-events-none');
+            }
+        }
+        scalingToggle.addEventListener('change', updateScalableSettings);
+        updateScalableSettings();
+
+        // --- Handlers ---
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.toLowerCase().endsWith('.glb') || file.name.toLowerCase().endsWith('.vrm')) {
+                    selectedFile = file;
+                    
+                    dropZone.classList.add('hidden');
+                    viewerSection.classList.remove('hidden');
+                    actionSection.classList.remove('hidden');
+                    resultSection.classList.add('hidden');
+                    logWrapper.classList.add('hidden'); // Reset logs
+                    
+                    if (!threeInitialized) {
+                        initThree();
+                    } else {
+                        onWindowResize();
+                    }
+
+                    loadModelToScene(file);
+                    extractInitialMeta(file);
+                } else {
+                    alert('GLBまたはVRMファイルを選択してください。');
+                }
+            }
+        }
+
+        function loadModelToScene(fileOrBlob) {
+            const url = URL.createObjectURL(fileOrBlob);
+            if (currentModel) {
+                if(currentModel.scene) scene.remove(currentModel.scene);
+                currentModel = null;
+            }
+
+            const loader = new GLTFLoader();
+            loader.register((parser) => new VRMLoaderPlugin(parser));
+
+            loader.load(url, (gltf) => {
+                const vrm = gltf.userData.vrm;
+                const model = vrm ? vrm.scene : gltf.scene;
+                if(vrm) {
+                    currentModel = vrm;
+                    model.rotation.y = Math.PI; 
+                } else {
+                    currentModel = { scene: model };
+                }
+                scene.add(model);
+                
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                controls.target.copy(center);
+                
+                if(fileOrBlob instanceof File) {
+                    previewFilename.textContent = fileOrBlob.name;
+                    if (!metaTitle.value) metaTitle.value = fileOrBlob.name.replace(/\.(glb|vrm)$/i, '');
+                }
+            }, 
+            undefined, 
+            (error) => { console.error(error); alert("モデルの読み込みに失敗しました。"); });
+        }
+
+        function handleThumbFiles(files) {
+            if (files && files[0]) {
+                const file = files[0];
+                if (file.type.startsWith('image/')) {
+                    selectedThumbFile = file;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        thumbPreview.src = ev.target.result;
+                        thumbPreview.classList.remove('hidden');
+                        thumbPlaceholder.classList.add('hidden');
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert('画像ファイル(PNG/JPG)を選択してください。');
+                }
+            }
+        }
+
+        async function extractInitialMeta(file) {
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const dataView = new DataView(arrayBuffer);
+                const totalLength = dataView.getUint32(8, true);
+                let offset = 12;
+                while (offset < totalLength) {
+                    const chunkLength = dataView.getUint32(offset, true);
+                    const chunkType = dataView.getUint32(offset + 4, true);
+                    offset += 8;
+                    if (chunkType === 0x4E4F534A) {
+                        const jsonText = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset, chunkLength));
+                        const json = JSON.parse(jsonText);
+                        if (json.extensions && json.extensions.VRM && json.extensions.VRM.meta) {
+                            const m = json.extensions.VRM.meta;
+                            if(m.title) metaTitle.value = m.title;
+                            if(m.author) metaAuthor.value = m.author;
+                        } else if (json.asset && json.asset.extras) {
+                            if(json.asset.extras.title) metaTitle.value = json.asset.extras.title;
+                            if(json.asset.extras.author) metaAuthor.value = json.asset.extras.author;
+                        }
+                        break;
+                    }
+                    offset += chunkLength;
+                }
+            } catch (e) { console.warn(e); }
+        }
+
+        convertBtn.addEventListener('click', () => {
+            if (selectedFile) processGLB(selectedFile);
+            else alert("ファイルを選択してください");
+        });
+
+        function log(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.textContent = `> ${msg}`;
+            if (type === 'error') div.classList.add('text-red-400');
+            else if (type === 'success') div.classList.add('text-green-400', 'font-bold');
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight; // Fix: scroll inner div
+        }
+
+        async function processGLB(file) {
+            convertBtn.disabled = true;
+            convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            convertBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 変換中...';
+            
+            logWrapper.classList.remove('hidden');
+            logs.innerHTML = '';
+            generatedBlob = null;
+
+            log(`読み込み中...: ${file.name}`);
+
+            try {
+                await new Promise(r => setTimeout(r, 100));
+
+                let thumbBuffer = null;
+                let thumbMime = null;
+                if (selectedThumbFile) {
+                    thumbBuffer = await selectedThumbFile.arrayBuffer();
+                    thumbMime = selectedThumbFile.type;
+                }
+
+                const arrayBuffer = await file.arrayBuffer();
+                const dataView = new DataView(arrayBuffer);
+                const totalLength = dataView.getUint32(8, true);
+                let offset = 12;
+                let jsonChunk = null;
+                let binChunk = null;
+
+                while (offset < totalLength) {
+                    const chunkLength = dataView.getUint32(offset, true);
+                    const chunkType = dataView.getUint32(offset + 4, true);
+                    offset += 8;
+                    if (chunkType === 0x4E4F534A) {
+                        const jsonBytes = new Uint8Array(arrayBuffer, offset, chunkLength);
+                        jsonChunk = JSON.parse(new TextDecoder().decode(jsonBytes));
+                    } else if (chunkType === 0x004E4942) {
+                        binChunk = new Uint8Array(arrayBuffer, offset, chunkLength);
+                    }
+                    offset += chunkLength;
+                }
+
+                if (!jsonChunk || !binChunk) throw new Error("JSON/BINチャンク破損");
+
+                const additionalBin = modifyJsonForVCI(jsonChunk, thumbBuffer, thumbMime, binChunk.byteLength);
+                const newVciBuffer = rebuildGLB(jsonChunk, binChunk, additionalBin);
+                
+                generatedBlob = new Blob([newVciBuffer], { type: 'application/octet-stream' });
+                generatedFileName = file.name.replace(/\.(glb|vrm)$/i, '.vci');
+                fileInfo.textContent = `${generatedFileName} (${(generatedBlob.size / 1024).toFixed(1)} KB)`;
+                
+                resultSection.classList.remove('hidden');
+                log("変換完了！ 下記からダウンロードできます", "success");
+                
+                // Fix: プレビューの更新は行わない（元の表示のまま）
+                resultSection.scrollIntoView({ behavior: 'smooth' });
+
+            } catch (err) {
+                log(err.message, 'error');
+            } finally {
+                convertBtn.disabled = false;
+                convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                convertBtn.innerHTML = '<i class="fas fa-magic"></i> <span>変換を実行する</span>';
+            }
+        }
+
+        // ... (modifyJsonForVCI and addUnityMaterialExtension same as before) ...
+        function modifyJsonForVCI(json, thumbBuffer, thumbMime, originalBinLength) {
+            const settingTitle = metaTitle.value || "Converted VCI";
+            const settingVersion = metaVersion.value || "1.0";
+            const settingAuthor = metaAuthor.value || "Unknown";
+            const settingContact = metaContact.value || "";
+            const settingReference = metaReference.value || "";
+            const settingDescription = metaDescription.value || `Converted from ${selectedFile.name}`;
+            
+            const settingModelLicenseType = licenseModelType.value;
+            const settingModelLicenseUrl = licenseModelUrl.value || "";
+            const settingScriptLicenseType = licenseScriptType.value;
+            const settingScriptLicenseUrl = licenseScriptUrl.value || "";
+            const settingScriptProtected = scriptProtected.checked;
+            const settingScriptDebugging = scriptDebugging.checked;
+
+            const settingScale = parseFloat(scaleInput.value) || 1.0;
+            const settingLayer = layerSelect.value;
+            const layerMap = { "Default": "default", "VCIAccessory": "accessory", "VCIItem": "item", "VCIPickUp": "pickup", "Location": "location" };
+            const colliderLayerKey = layerMap[settingLayer] || "default";
+
+            // Viewer Fix (glTF Standard Materials)
+            let gltfFixCount = 0;
+            if (json.extensions && json.extensions.VRM && Array.isArray(json.extensions.VRM.materialProperties) && Array.isArray(json.materials)) {
+                const vrmMats = json.extensions.VRM.materialProperties;
+                json.materials.forEach((mat, idx) => {
+                    const mp = vrmMats[idx];
+                    if (!mp || !mp.floatProperties) return;
+                    const f = mp.floatProperties;
+                    if (f._BlendMode == 2 && f._ZWrite == 0) {
+                        mat.alphaMode = "MASK";
+                        const cutoff = (typeof f._Cutoff == "number") ? f._Cutoff : 0.5;
+                        if (mat.alphaCutoff == null) mat.alphaCutoff = cutoff;
+                        gltfFixCount++;
+                    }
+                });
+            }
+            if(gltfFixCount > 0) log(`Webプレビュー用: ${gltfFixCount}個のマテリアル補正`);
+
+            // Thumbnail
+            let thumbTextureIndex = -1;
+            let additionalBin = null;
+            if (thumbBuffer && thumbMime) {
+                json.bufferViews = json.bufferViews || [];
+                json.images = json.images || [];
+                json.textures = json.textures || [];
+                const originalPadding = (4 - (originalBinLength % 4)) % 4;
+                const alignedOffset = originalBinLength + originalPadding;
+                const newBufferViewIndex = json.bufferViews.length;
+                json.bufferViews.push({ buffer: 0, byteOffset: alignedOffset, byteLength: thumbBuffer.byteLength });
+                const newImageIndex = json.images.length;
+                json.images.push({ bufferView: newBufferViewIndex, mimeType: thumbMime });
+                const newTextureIndex = json.textures.length;
+                json.textures.push({ source: newImageIndex });
+                thumbTextureIndex = newTextureIndex;
+                additionalBin = new Uint8Array(thumbBuffer);
+                log("サムネイル画像を埋め込みました");
+            }
+
+            // Meta
+            json.extensions = json.extensions || {};
+            json.extensions["VCAST_vci_meta"] = {
+                exporterVCIVersion: "UniVCI-0.41", specVersion: "0.41", version: "1",
+                title: settingTitle, version: settingVersion, author: settingAuthor,
+                contactInformation: settingContact, reference: settingReference, description: settingDescription,
+                thumbnail: thumbTextureIndex,
+                modelDataLicenseType: settingModelLicenseType, modelDataOtherLicenseUrl: settingModelLicenseUrl,
+                scriptLicenseType: settingScriptLicenseType, scriptOtherLicenseUrl: settingScriptLicenseUrl,
+                scriptWriteProtected: settingScriptProtected, scriptEnableDebugging: settingScriptDebugging
+            };
+
+            json.extensionsUsed = json.extensionsUsed || [];
+            ["VCAST_vci_meta", "VCAST_vci_item", "VCAST_vci_collider", "VCAST_vci_material_unity", "VCAST_vci_rigidbody"].forEach(e => {
+                if(!json.extensionsUsed.includes(e)) json.extensionsUsed.push(e);
+            });
+
+            // Root & Scale
+            let vciRootNodeIndex = 0;
+            if (json.scenes && json.scenes.length > 0 && json.scenes[0].nodes && json.scenes[0].nodes.length > 0) {
+                vciRootNodeIndex = json.scenes[0].nodes[0];
+            }
+            const rootNode = json.nodes[vciRootNodeIndex];
+            rootNode.extensions = rootNode.extensions || {};
+            const currentScale = rootNode.scale || [1, 1, 1];
+            rootNode.scale = [currentScale[0] * settingScale, currentScale[1] * settingScale, currentScale[2] * settingScale];
+
+            rootNode.extensions["VCAST_vci_item"] = {
+                grabbable: true, scalable: scalingToggle.checked, uniformScaling: uniformScalingToggle.checked, attractable: false, groupId: 0
+            };
+
+            // Collider
+            let meshNodeIndex = -1;
+            if (json.nodes) meshNodeIndex = json.nodes.findIndex(n => n && n.mesh !== undefined);
+            let center = [0,0,0], size = [0.1,0.1,0.1];
+            if (meshNodeIndex >= 0 && json.nodes[meshNodeIndex]) {
+                const meshNode = json.nodes[meshNodeIndex];
+                const mesh = json.meshes[meshNode.mesh];
+                if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
+                    const acc = json.accessors[mesh.primitives[0].attributes.POSITION];
+                    if (acc.min && acc.max) {
+                        center = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
+                        size = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
+                        if (meshNode.scale) { for(let i=0; i<3; i++) { size[i] *= meshNode.scale[i]; center[i] *= meshNode.scale[i]; } }
+                    }
+                }
+            }
+
+            rootNode.extensions["VCAST_vci_collider"] = {
+                colliders: [{ type: "box", layer: colliderLayerKey, center: center, shape: size, isTrigger: triggerToggle.checked }]
+            };
+
+            rootNode.extensions["VCAST_vci_rigidbody"] = {
+                rigidbodies: [{
+                    mass: 1, drag: 0, angularDrag: 0.05,
+                    useGravity: gravityToggle.checked, isKinematic: kinematicToggle.checked,
+                    interpolate: "none", collisionDetection: "discrete",
+                    freezePositionX: false, freezePositionY: false, freezePositionZ: false,
+                    freezeRotationX: false, freezeRotationY: false, freezeRotationZ: false
+                }]
+            };
+
+            addUnityMaterialExtension(json);
+            return additionalBin;
+        }
+
+        function addUnityMaterialExtension(json) {
+            json.extensions = json.extensions || {};
+            if (json.extensions["VCAST_vci_material_unity"]) return;
+
+            let unityMats = [];
+            let fixedCount = 0;
+
+            if (json.extensions && json.extensions.VRM && Array.isArray(json.extensions.VRM.materialProperties)) {
+                log("VRM拡張データを確認しました...");
+                const vrmMats = json.extensions.VRM.materialProperties;
+                const gltfMats = json.materials || [];
+
+                unityMats = vrmMats.map((src, idx) => {
+                    const mp = src || {};
+                    const floatProps = Object.assign({}, mp.floatProperties || {});
+                    const vectorProps = Object.assign({}, mp.vectorProperties || {});
+                    const texProps = Object.assign({}, mp.textureProperties || {});
+                    const keywordMap = Object.assign({}, mp.keywordMap || {});
+                    const tagMap = Object.assign({}, mp.tagMap || {});
+
+                    if (floatProps._BlendMode == 2 && floatProps._ZWrite == 0) {
+                        log(`  [修正] ${mp.name || idx}: Transparent -> Cutout に変更`);
+                        floatProps._BlendMode = 1; 
+                        floatProps._ZWrite = 1;
+                        if (floatProps._Cutoff == null) floatProps._Cutoff = 0.5;
+                        mp.renderQueue = (typeof mp.renderQueue == "number") ? mp.renderQueue : 2450;
+                        keywordMap._ALPHATEST_ON = true;
+                        delete keywordMap._ALPHABLEND_ON;
+                        delete keywordMap._ALPHAPREMULTIPLY_ON;
+                        fixedCount++;
+                    }
+
+                    return {
+                        name: mp.name || (gltfMats[idx] && gltfMats[idx].name) || `material_${idx}`,
+                        shader: mp.shader || "VRM/MToon",
+                        renderQueue: (typeof mp.renderQueue === "number") ? mp.renderQueue : 2000,
+                        floatProperties: floatProps, vectorProperties: vectorProps,
+                        textureProperties: texProps, keywordMap: keywordMap, tagMap: tagMap
+                    };
+                });
+                log(`VCI用: 合計 ${fixedCount} 個のマテリアルを補正しました`);
+            } else {
+                log("VRM拡張が見つかりません。標準変換を行います。");
+                const materials = json.materials || [];
+                unityMats = materials.map((m, i) => ({
+                    name: m.name || `material_${i}`,
+                    shader: "VRM_USE_GLTFSHADER", renderQueue: 2000,
+                    floatProperties: {}, vectorProperties: {}, textureProperties: {}, keywordMap: {}, tagMap: {}
+                }));
+            }
+            json.extensions["VCAST_vci_material_unity"] = { materials: unityMats };
+        }
+
+        function rebuildGLB(json, binChunk, additionalBin) {
+            const jsonString = JSON.stringify(json);
+            const encoder = new TextEncoder();
+            let jsonBytes = encoder.encode(jsonString);
+            const jsonPadding = (4 - (jsonBytes.length % 4)) % 4;
+            if (jsonPadding > 0) {
+                const newJson = new Uint8Array(jsonBytes.length + jsonPadding);
+                newJson.set(jsonBytes);
+                for(let i=0; i<jsonPadding; i++) newJson[jsonBytes.length+i] = 0x20;
+                jsonBytes = newJson;
+            }
+
+            let binLength = binChunk.byteLength;
+            const binPadding = (4 - (binLength % 4)) % 4;
+            let additionalLength = additionalBin ? additionalBin.byteLength : 0;
+            const combinedBinLength = binLength + binPadding + additionalLength;
+            const totalBinPadding = (4 - (combinedBinLength % 4)) % 4;
+            const finalBinLength = combinedBinLength + totalBinPadding;
+
+            if (json.buffers && json.buffers[0]) json.buffers[0].byteLength = finalBinLength;
+
+            const buffer = new ArrayBuffer(12 + 8 + jsonBytes.length + 8 + finalBinLength);
+            const view = new DataView(buffer);
+            
+            let offset = 0;
+            view.setUint32(0, 0x46546C67, true);
+            view.setUint32(4, 2, true);
+            view.setUint32(8, buffer.byteLength, true);
+            offset += 12;
+
+            view.setUint32(offset, jsonBytes.length, true);
+            view.setUint32(offset+4, 0x4E4F534A, true);
+            offset += 8;
+            new Uint8Array(buffer, offset, jsonBytes.length).set(jsonBytes);
+            offset += jsonBytes.length;
+
+            view.setUint32(offset, finalBinLength, true);
+            view.setUint32(offset+4, 0x004E4942, true);
+            offset += 8;
+
+            const binArray = new Uint8Array(buffer, offset, finalBinLength);
+            binArray.set(binChunk, 0);
+            for(let i=0; i<binPadding; i++) binArray[binLength+i] = 0x00;
+            if (additionalBin) binArray.set(additionalBin, binLength + binPadding);
+            return buffer;
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            if (!generatedBlob) {
+                alert("ファイルが生成されていません。変換を実行してください。");
+                return;
+            }
+            const url = URL.createObjectURL(generatedBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = generatedFileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
