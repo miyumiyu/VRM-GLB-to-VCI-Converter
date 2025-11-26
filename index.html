@@ -4,7 +4,1293 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VRM/GLB to VCI Converter (v5.4)</title>
+    <script src="https://cdn.tailwindcss.com"></script><!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VRM/GLB to VCI Converter (v5.4)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Import Map for stable module loading -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.154.0/examples/jsm/",
+            "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@2.0.0/lib/three-vrm.module.js"
+        }
+    }
+    </script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .drag-active { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; } /* gray-800 */
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        /* Preview Canvas Container */
+        #three-container {
+            width: 100%;
+            height: 500px; 
+            background-color: #e5e7eb; /* gray-200 */
+            border-radius: 0.5rem;
+            overflow: hidden;
+            position: relative;
+        }
+        canvas { display: block; width: 100%; height: 100%; outline: none; }
+
+        /* --- Toggle Switch Logic --- */
+        input:checked ~ .check-bg {
+            background-color: #3b82f6;
+        }
+        input:checked ~ .dot {
+            transform: translateX(1.25rem); 
+        }
+
+        /* Range Slider Customization */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #d1d5db;
+            border-radius: 2px;
+        }
+
+        /* Simple Fade In Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
+
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.5 (Split Scale/Height)</span></h1>
+        <p class="text-gray-600 mb-6 text-sm">
+            VRM/GLBをVCI(Spec 0.43)に変換します。スケールは格納ノード、高さはルートノードに適用されます。
+        </p>
+
+        <!-- 1. Upload & Viewer Zone -->
+        <div class="mb-8">
+            <!-- Drop Zone -->
+            <div id="drop-zone" class="w-full border-2 border-dashed border-gray-300 rounded-lg p-8 text-center transition-colors cursor-pointer hover:bg-gray-50 relative group z-10">
+                <div id="drop-content" class="group-hover:scale-105 transition-transform duration-200">
+                    <i class="fas fa-cube text-5xl text-gray-400 mb-3"></i>
+                    <p class="text-gray-600 font-bold text-lg">1. VRM / GLB / VCI ファイルをここにドロップ</p>
+                    <p class="text-gray-400 text-sm">またはクリックしてファイルを選択</p>
+                </div>
+                <input type="file" id="file-input" accept=".glb,.vrm,.vci" class="hidden">
+            </div>
+
+            <!-- Viewer Section -->
+            <div id="viewer-section" class="hidden mt-4 bg-gray-100 rounded-lg p-2 border border-gray-200 relative animate-fade-in">
+                <div class="absolute top-4 right-4 z-10 flex space-x-2">
+                    <div class="bg-black bg-opacity-50 text-white px-3 py-1 rounded text-xs font-mono pointer-events-none backdrop-blur-sm">
+                        Size(H): <span id="model-height-display">--</span> m
+                    </div>
+                    <button id="change-file-btn" class="bg-white bg-opacity-90 hover:bg-opacity-100 text-gray-700 px-4 py-2 rounded shadow text-xs font-bold transition-all flex items-center">
+                        <i class="fas fa-sync-alt mr-2"></i>ファイルを変更
+                    </button>
+                </div>
+                
+                <!-- Three.js Canvas -->
+                <div id="three-container"></div>
+
+                <!-- Transform Controls (Overlay) -->
+                <div class="bg-white p-3 mt-2 rounded border border-gray-200 flex flex-col gap-3">
+                    
+                    <!-- Scale -->
+                    <div class="flex flex-col gap-1">
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs font-bold text-gray-700"><i class="fas fa-ruler-combined mr-1"></i>スケール (Scale)</label>
+                            <span id="scale-value-display" class="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">1.00x</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="scale-reset-btn" class="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600" title="リセット">1.0</button>
+                            <!-- Scale range 0.001 to 20.0 -->
+                            <input type="range" id="scale-slider" min="0.001" max="20.0" step="0.001" value="1.0" class="flex-1">
+                            <input type="number" id="scale-input" value="1.0" step="0.001" min="0.001" class="w-20 px-2 py-1 border border-gray-300 rounded text-xs text-center">
+                        </div>
+                    </div>
+
+                    <!-- Height (Y) -->
+                    <div class="flex flex-col gap-1 border-t border-gray-100 pt-2">
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs font-bold text-gray-700"><i class="fas fa-arrows-alt-v mr-1.5"></i>高さ調整 (Position Y)</label>
+                            <span id="height-value-display" class="text-xs font-mono font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">0.00m</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="height-reset-btn" class="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600" title="リセット">0.0</button>
+                            <!-- Height range -5.0 to 5.0 -->
+                            <input type="range" id="height-slider" min="-5.0" max="5.0" step="0.01" value="0.0" class="flex-1">
+                            <input type="number" id="height-input" value="0.0" step="0.01" class="w-20 px-2 py-1 border border-gray-300 rounded text-xs text-center">
+                        </div>
+                    </div>
+
+                    <p class="text-[10px] text-gray-400 text-right mt-1">※床のグリッドは1m間隔。青い人影(約1.6m)はドラッグで移動できます。</p>
+                </div>
+
+                <!-- Filename Display -->
+                <div class="bg-white p-2 mt-2 rounded border border-gray-200 flex items-center justify-center space-x-2">
+                    <i class="fas fa-check-circle text-green-500"></i>
+                    <p class="text-center text-sm text-gray-700 font-bold" id="preview-filename">filename.vrm</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Left Column: Basic Meta -->
+            <div class="flex flex-col gap-6">
+                <div class="bg-purple-50 p-5 rounded-lg border border-purple-100 flex-1">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide border-b border-purple-200 pb-2">
+                        <i class="fas fa-info-circle mr-1"></i> 2. メタデータ設定
+                    </h3>
+                    
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-gray-600 text-xs font-bold mb-1">Title <span class="text-red-400">*</span></label>
+                            <input type="text" id="meta-title" placeholder="アイテム名" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Version</label>
+                                <input type="text" id="meta-version" value="1.0" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Author</label>
+                                <input type="text" id="meta-author" placeholder="作成者" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Contact Information</label>
+                                <input type="text" id="meta-contact" placeholder="連絡先 (Twitter等)" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Reference</label>
+                                <input type="text" id="meta-reference" placeholder="参照URL" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-gray-600 text-xs font-bold mb-1">Description</label>
+                            <textarea id="meta-description" rows="3" placeholder="アイテムの説明文" class="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-purple-500 resize-none"></textarea>
+                        </div>
+
+                        <div>
+                            <label class="block text-gray-600 text-xs font-bold mb-1">Thumbnail</label>
+                            <div id="thumb-drop-zone" class="w-full border-2 border-dashed border-gray-300 rounded-lg p-3 transition-colors hover:bg-white cursor-pointer group bg-white bg-opacity-60">
+                                <div class="flex items-center space-x-4">
+                                    <div class="w-16 h-16 bg-gray-200 rounded border border-gray-300 overflow-hidden flex-shrink-0 relative">
+                                        <img id="thumb-preview" class="w-full h-full object-cover hidden">
+                                        <div id="thumb-placeholder" class="w-full h-full flex items-center justify-center text-gray-400 group-hover:text-purple-500 transition-colors">
+                                            <i class="fas fa-image text-xl"></i>
+                                        </div>
+                                    </div>
+                                    <div class="flex-1">
+                                        <p class="text-xs font-bold text-gray-600 group-hover:text-purple-600">サムネイル画像を選択</p>
+                                        <p class="text-[10px] text-gray-400">クリックまたはドロップ (推奨: 正方形)</p>
+                                    </div>
+                                </div>
+                                <input type="file" id="thumb-input" accept="image/png, image/jpeg" class="hidden">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: License & Behavior -->
+            <div class="flex flex-col gap-6">
+                
+                <!-- 3. License Settings -->
+                <div class="bg-orange-50 p-5 rounded-lg border border-orange-100">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide border-b border-orange-200 pb-2">
+                        <i class="fas fa-file-contract mr-1"></i> 3. ライセンス・スクリプト設定
+                    </h3>
+                    
+                    <div class="space-y-4">
+                        <!-- Model License -->
+                        <div class="bg-white bg-opacity-50 p-3 rounded border border-orange-100">
+                            <p class="text-xs font-bold text-gray-500 mb-2">Model Data License</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                <select id="license-model-type" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white">
+                                    <option value="redistribution_prohibited">Redistribution_Prohibited</option>
+                                    <option value="cc0" selected>CC0</option>
+                                    <option value="cc_by">CC_BY</option>
+                                    <option value="cc_by_nc">CC_BY_NC</option>
+                                    <option value="cc_by_sa">CC_BY_SA</option>
+                                    <option value="cc_by_nc_sa">CC_BY_NC_SA</option>
+                                    <option value="cc_by_nd">CC_BY_NC_ND</option>
+                                    <option value="cc_by_nc_nd">CC_BY_NC_ND</option>
+                                    <option value="other">Other</option>
+                                </select>
+                                <input type="text" id="license-model-url" placeholder="Other License URL" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs">
+                            </div>
+                        </div>
+
+                        <!-- Script License -->
+                        <div class="bg-white bg-opacity-50 p-3 rounded border border-orange-100">
+                            <p class="text-xs font-bold text-gray-500 mb-2">Script License</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                <select id="license-script-type" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white">
+                                    <option value="redistribution_prohibited">Redistribution_Prohibited</option>
+                                    <option value="cc0" selected>CC0</option>
+                                    <option value="cc_by">CC_BY</option>
+                                    <option value="cc_by_nc">CC_BY_NC</option>
+                                    <option value="cc_by_sa">CC_BY_SA</option>
+                                    <option value="cc_by_nc_sa">CC_BY_NC_SA</option>
+                                    <option value="cc_by_nd">CC_BY_NC_ND</option>
+                                    <option value="cc_by_nc_nd">CC_BY_NC_ND</option>
+                                    <option value="other">Other</option>
+                                </select>
+                                <input type="text" id="license-script-url" placeholder="Other License URL" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs">
+                            </div>
+                            
+                            <!-- Script Flags -->
+                            <div class="flex items-center space-x-4 mt-2 border-t border-dashed border-orange-200 pt-2">
+                                <label class="flex items-center space-x-2 cursor-pointer relative z-10">
+                                    <input type="checkbox" id="script-protected" class="form-checkbox h-3 w-3 text-orange-500 rounded border-gray-300">
+                                    <span class="text-xs text-gray-600">Write Protected</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer relative z-10">
+                                    <input type="checkbox" id="script-debugging" class="form-checkbox h-3 w-3 text-orange-500 rounded border-gray-300">
+                                    <span class="text-xs text-gray-600">Enable Debugging</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Behavior Settings -->
+                <div class="bg-blue-50 p-5 rounded-lg border border-blue-100 flex-1">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide border-b border-blue-200 pb-2">
+                        <i class="fas fa-cogs mr-1"></i> 4. 動作・物理設定
+                    </h3>
+                    
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-gray-600 text-xs font-bold mb-1">Collider Layer</label>
+                                <select id="layer-select" class="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white">
+                                    <option value="Default">Default</option>
+                                    <option value="Location">Location</option>
+                                    <option value="VCIAccessory">VCIAccessory</option>
+                                    <option value="VCIItem">VCIItem</option>
+                                    <option value="VCIPickUp" selected>VCIPickUp (Default)</option>
+                                </select>
+                            </div>
+                            <!-- Scale Input removed from here (moved to viewer control) -->
+                            <div class="flex flex-col justify-center">
+                                <p class="text-xs text-gray-500">※スケール・高さ設定はプレビュー画面のスライダーで行ってください</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-2">
+                            <!-- 拡縮: ON -->
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">拡縮 (Scalable)</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="scaling-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label id="uniform-scaling-label" class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10 transition-opacity duration-200">
+                                <span class="text-xs text-gray-600">等倍拡縮 (Uniform)</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="uniform-scaling-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Is Kinematic</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="kinematic-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Is Trigger</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="trigger-toggle" class="sr-only">
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Use Gravity</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="gravity-toggle" class="sr-only">
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+                            
+                            <!-- Attractable: Default ON -->
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Attractable (引き寄せ)</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="attractable-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 5: Action -->
+        <div id="action-section" class="hidden w-full mt-4 animate-fade-in pb-10">
+            <button id="convert-btn" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold py-4 px-8 rounded-lg shadow-lg transform transition hover:-translate-y-1 flex items-center justify-center gap-2 text-lg">
+                <i class="fas fa-magic"></i>
+                <span>変換を実行する</span>
+            </button>
+        </div>
+
+        <!-- Logs & Result -->
+        <div id="log-wrapper" class="hidden mt-6 bg-gray-900 p-4 rounded-md w-full mb-4">
+            <div class="flex justify-between items-center mb-2 border-b border-gray-700 pb-1">
+                <div class="font-bold text-white text-xs font-mono">処理ログ / 診断レポート</div>
+                <button id="clear-log-btn" class="text-xs text-gray-400 hover:text-white">Clear</button>
+            </div>
+            <div id="logs" class="text-green-400 font-mono text-xs h-40 overflow-y-auto shadow-inner whitespace-pre-wrap"></div>
+        </div>
+
+        <div id="result-section" class="hidden mt-2 text-center w-full pb-10">
+            <button id="download-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transform transition hover:-translate-y-1 flex items-center justify-center mx-auto gap-2">
+                <i class="fas fa-download"></i>
+                <span>VCIファイルをダウンロード</span>
+            </button>
+            <p class="text-xs text-gray-500 mt-2" id="file-info"></p>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { DragControls } from 'three/addons/controls/DragControls.js'; // Add DragControls
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+        // --- Globals for Three.js ---
+        let scene, camera, renderer, controls, currentModel;
+        let referenceHuman; // Reference silhouette
+        let threeInitialized = false;
+        let originalModelScale = new THREE.Vector3(1, 1, 1);
+
+        // DOM Elements
+        const dropZone = document.getElementById('drop-zone');
+        const dropContent = document.getElementById('drop-content');
+        const viewerSection = document.getElementById('viewer-section');
+        const threeContainer = document.getElementById('three-container');
+        const changeFileBtn = document.getElementById('change-file-btn');
+        const fileInput = document.getElementById('file-input');
+        const previewFilename = document.getElementById('preview-filename');
+        const actionSection = document.getElementById('action-section');
+        const convertBtn = document.getElementById('convert-btn');
+        const modelHeightDisplay = document.getElementById('model-height-display');
+
+        const logWrapper = document.getElementById('log-wrapper');
+        const logs = document.getElementById('logs');
+        const clearLogBtn = document.getElementById('clear-log-btn');
+        const resultSection = document.getElementById('result-section');
+        const downloadBtn = document.getElementById('download-btn');
+        const fileInfo = document.getElementById('file-info');
+
+        // Settings
+        const layerSelect = document.getElementById('layer-select');
+        const scalingToggle = document.getElementById('scaling-toggle');
+        const uniformScalingToggle = document.getElementById('uniform-scaling-toggle'); 
+        const uniformScalingLabel = document.getElementById('uniform-scaling-label'); 
+        const kinematicToggle = document.getElementById('kinematic-toggle');
+        const gravityToggle = document.getElementById('gravity-toggle');
+        const triggerToggle = document.getElementById('trigger-toggle');
+        const attractableToggle = document.getElementById('attractable-toggle');
+        
+        // Transform Controls
+        const scaleSlider = document.getElementById('scale-slider');
+        const scaleInput = document.getElementById('scale-input');
+        const scaleValueDisplay = document.getElementById('scale-value-display');
+        const scaleResetBtn = document.getElementById('scale-reset-btn');
+
+        const heightSlider = document.getElementById('height-slider');
+        const heightInput = document.getElementById('height-input');
+        const heightValueDisplay = document.getElementById('height-value-display');
+        const heightResetBtn = document.getElementById('height-reset-btn');
+        
+        const metaTitle = document.getElementById('meta-title');
+        const metaVersion = document.getElementById('meta-version');
+        const metaAuthor = document.getElementById('meta-author');
+        const metaContact = document.getElementById('meta-contact');
+        const metaReference = document.getElementById('meta-reference');
+        const metaDescription = document.getElementById('meta-description');
+        
+        const thumbDropZone = document.getElementById('thumb-drop-zone');
+        const thumbInput = document.getElementById('thumb-input');
+        const thumbPreview = document.getElementById('thumb-preview');
+        const thumbPlaceholder = document.getElementById('thumb-placeholder');
+
+        const licenseModelType = document.getElementById('license-model-type');
+        const licenseModelUrl = document.getElementById('license-model-url');
+        const licenseScriptType = document.getElementById('license-script-type');
+        const licenseScriptUrl = document.getElementById('license-script-url');
+        const scriptProtected = document.getElementById('script-protected');
+        const scriptDebugging = document.getElementById('script-debugging');
+
+        let selectedFile = null;
+        let selectedThumbFile = null;
+        let generatedBlob = null;
+        let generatedFileName = "";
+
+        // --- Initialization ---
+        function onWindowResize() {
+            if (!renderer || !camera) return;
+            const width = threeContainer.clientWidth || threeContainer.offsetWidth || 640;
+            const height = threeContainer.clientHeight || threeContainer.offsetHeight || 500;
+            
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xe5e7eb); 
+
+            // Lights
+            const light = new THREE.DirectionalLight(0xffffff);
+            light.position.set(1.0, 1.0, 1.0).normalize();
+            scene.add(light);
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+
+            // Grid Helper (10m size, 1m main div, 0.5m sub div implied)
+            const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+            scene.add(gridHelper);
+            // Finer grid for 0.5m
+            const fineGridHelper = new THREE.GridHelper(20, 40, 0x000000, 0xdddddd);
+            fineGridHelper.material.opacity = 0.2;
+            fineGridHelper.material.transparent = true;
+            // Prevent z-fighting
+            fineGridHelper.position.y = 0.001;
+            scene.add(fineGridHelper);
+
+            // Reference Human (approx 1.6m height)
+            const geometry = new THREE.CylinderGeometry(0.25, 0.25, 1.6, 32);
+            const material = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3 });
+            referenceHuman = new THREE.Mesh(geometry, material);
+            referenceHuman.position.set(2, 0.8, 0); // Offset to side, center y at 0.8 (0.8 * 2 = 1.6m)
+            // Add a head
+            const headGeo = new THREE.SphereGeometry(0.2, 32, 32);
+            const headMesh = new THREE.Mesh(headGeo, material);
+            // Fix: Cylinder y=0.8 means top is 1.6. Head radius 0.2. Center head at 1.7 relative to 0.
+            // Local pos from cylinder center(0.8): 1.7 - 0.8 = 0.9
+            headMesh.position.set(0, 0.9, 0); 
+            referenceHuman.add(headMesh);
+            
+            scene.add(referenceHuman);
+
+            camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+            camera.position.set(0, 2.0, 5.0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.outputEncoding = THREE.sRGBEncoding; 
+            renderer.setPixelRatio(window.devicePixelRatio);
+            threeContainer.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1.0, 0);
+            controls.update();
+
+            // --- Drag Controls for Reference Human ---
+            const dControls = new DragControls([referenceHuman], camera, renderer.domElement);
+            dControls.addEventListener('dragstart', function (event) {
+                controls.enabled = false; // Disable orbit
+                event.object.material.opacity = 0.5;
+            });
+            dControls.addEventListener('drag', function (event) {
+                // Lock Y axis to floor level (0.8 for cylinder center)
+                event.object.position.y = 0.8; 
+            });
+            dControls.addEventListener('dragend', function (event) {
+                controls.enabled = true; // Enable orbit
+                event.object.material.opacity = 0.3;
+            });
+
+            window.addEventListener('resize', onWindowResize);
+            onWindowResize();
+            threeInitialized = true;
+            
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(currentModel && currentModel.scene) {
+                // Animation mix for VRM might be needed but for static props just render
+                // If VRM instance, use vrm.update(delta)
+            }
+            renderer.render(scene, camera);
+        }
+
+        // --- Transform Logic (Scale & Height) ---
+        function updateTransform() {
+            if (!currentModel || !currentModel.scene) return;
+
+            const scale = parseFloat(scaleInput.value);
+            const height = parseFloat(heightInput.value);
+
+            if (!isNaN(scale) && scale > 0) {
+                currentModel.scene.scale.set(
+                    originalModelScale.x * scale, 
+                    originalModelScale.y * scale, 
+                    originalModelScale.z * scale
+                );
+            }
+
+            if (!isNaN(height)) {
+                currentModel.scene.position.y = height;
+            }
+
+            updateModelHeightDisplay();
+        }
+
+        // Scale Handlers
+        function setScale(val) {
+            const scale = parseFloat(val);
+            if (isNaN(scale) || scale <= 0) return;
+            scaleSlider.value = scale;
+            scaleInput.value = scale;
+            scaleValueDisplay.textContent = `${scale.toFixed(2)}x`;
+            updateTransform();
+        }
+        scaleSlider.addEventListener('input', (e) => setScale(e.target.value));
+        scaleInput.addEventListener('change', (e) => setScale(e.target.value));
+        scaleResetBtn.addEventListener('click', () => setScale(1.0));
+
+        // Height Handlers
+        function setHeight(val) {
+            const h = parseFloat(val);
+            if (isNaN(h)) return;
+            heightSlider.value = h;
+            heightInput.value = h;
+            heightValueDisplay.textContent = `${h.toFixed(2)}m`;
+            updateTransform();
+        }
+        heightSlider.addEventListener('input', (e) => setHeight(e.target.value));
+        heightInput.addEventListener('change', (e) => setHeight(e.target.value));
+        heightResetBtn.addEventListener('click', () => setHeight(0.0));
+
+
+        function updateModelHeightDisplay() {
+            if (!currentModel || !currentModel.scene) return;
+            
+            const box = new THREE.Box3().setFromObject(currentModel.scene);
+            const height = box.max.y - box.min.y;
+            modelHeightDisplay.textContent = height.toFixed(2);
+        }
+
+
+        // --- Event Listeners ---
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+        });
+        dropZone.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files), false);
+
+        changeFileBtn.addEventListener('click', () => {
+            fileInput.value = '';
+            fileInput.click();
+        });
+
+        thumbDropZone.addEventListener('click', () => thumbInput.click());
+        thumbInput.addEventListener('change', (e) => handleThumbFiles(e.target.files));
+        
+        clearLogBtn.addEventListener('click', () => { logs.innerHTML = ''; });
+
+        function updateScalableSettings() {
+            if (scalingToggle.checked) {
+                uniformScalingToggle.disabled = false;
+                uniformScalingLabel.classList.remove('opacity-50', 'pointer-events-none');
+            } else {
+                uniformScalingToggle.disabled = true;
+                uniformScalingLabel.classList.add('opacity-50', 'pointer-events-none');
+            }
+        }
+        scalingToggle.addEventListener('change', updateScalableSettings);
+        updateScalableSettings();
+
+        // --- Handlers ---
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                const file = files[0];
+                const fname = file.name.toLowerCase();
+                
+                if (fname.endsWith('.glb') || fname.endsWith('.vrm') || fname.endsWith('.vci')) {
+                    selectedFile = file;
+                    
+                    dropZone.classList.add('hidden');
+                    viewerSection.classList.remove('hidden');
+                    actionSection.classList.remove('hidden');
+                    resultSection.classList.add('hidden');
+                    logWrapper.classList.remove('hidden'); 
+                    
+                    if (!threeInitialized) {
+                        initThree();
+                    } else {
+                        onWindowResize();
+                    }
+
+                    loadModelToScene(file);
+                    inspectFile(file); // Run Inspector
+                } else {
+                    alert('GLB, VRM, または VCI ファイルを選択してください。');
+                }
+            }
+        }
+
+        function loadModelToScene(fileOrBlob) {
+            const url = URL.createObjectURL(fileOrBlob);
+            if (currentModel) {
+                if(currentModel.scene) scene.remove(currentModel.scene);
+                currentModel = null;
+            }
+
+            // Reset UI
+            setScale(1.0);
+            setHeight(0.0);
+
+            const loader = new GLTFLoader();
+            loader.register((parser) => new VRMLoaderPlugin(parser));
+
+            loader.load(url, (gltf) => {
+                const vrm = gltf.userData.vrm;
+                const model = vrm ? vrm.scene : gltf.scene;
+                if(vrm) {
+                    currentModel = vrm;
+                    // VRM usually faces -Z, rotate to face camera +Z if needed, or standard Y rotation
+                    model.rotation.y = Math.PI; 
+                } else {
+                    currentModel = { scene: model };
+                }
+                scene.add(model);
+                
+                // Store original scale (usually 1,1,1)
+                originalModelScale.copy(model.scale);
+
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+
+                // --- Auto Resize Logic for Giant Models ---
+                const maxDimension = Math.max(size.x, size.y, size.z);
+                const LIMIT_SIZE = 10.0; // 10m limit
+                
+                if (maxDimension > LIMIT_SIZE) {
+                    const autoScale = LIMIT_SIZE / maxDimension;
+                    model.scale.set(autoScale, autoScale, autoScale);
+                    
+                    // UI更新
+                    setScale(autoScale); 
+                    log(`モデルが巨大(${maxDimension.toFixed(2)}m)なため、${LIMIT_SIZE}m以下に自動縮小しました (Scale: ${autoScale.toFixed(4)}x)`, "warn");
+                    
+                    // Update box/size/center based on new scale for camera positioning
+                    box.setFromObject(model);
+                    box.getCenter(center);
+                    box.getSize(size);
+                }
+
+                // --- Dynamic Camera Adjustment ---
+                const newMaxDim = Math.max(size.x, size.y, size.z);
+                // Extend Far clipping plane based on model size to prevent clipping
+                camera.far = Math.max(50, newMaxDim * 50); 
+                camera.updateProjectionMatrix();
+
+                const fov = camera.fov * (Math.PI / 180);
+                let cameraZ = Math.abs(newMaxDim / 2 / Math.tan(fov / 2));
+                cameraZ *= 1.5; // zoom out a bit
+                
+                camera.position.set(center.x, center.y + size.y/2, cameraZ + center.z); // Slight offset
+                camera.lookAt(center);
+                controls.target.copy(center);
+                controls.update();
+
+                updateModelHeightDisplay();
+                
+                if(fileOrBlob instanceof File) {
+                    previewFilename.textContent = fileOrBlob.name;
+                    // Only auto-fill meta title if it's not a re-drop of VCI (which might have complex name)
+                    if (!metaTitle.value) metaTitle.value = fileOrBlob.name.replace(/\.(glb|vrm|vci)$/i, '');
+                }
+            }, 
+            undefined, 
+            (error) => { console.error(error); log("Viewer Error: モデルの表示に失敗しました (ファイル自体は有効かもしれません)", "error"); });
+        }
+
+        function handleThumbFiles(files) {
+            if (files && files[0]) {
+                const file = files[0];
+                if (file.type.startsWith('image/')) {
+                    selectedThumbFile = file;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        thumbPreview.src = ev.target.result;
+                        thumbPreview.classList.remove('hidden');
+                        thumbPlaceholder.classList.add('hidden');
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert('画像ファイル(PNG/JPG)を選択してください。');
+                }
+            }
+        }
+
+        function log(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.textContent = `> ${msg}`;
+            if (type === 'error') div.classList.add('text-red-400', 'font-bold');
+            else if (type === 'success') div.classList.add('text-green-400', 'font-bold');
+            else if (type === 'warn') div.classList.add('text-yellow-400');
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight; 
+        }
+
+        // --- VCI Inspector ---
+        async function inspectFile(file) {
+            log(`--- ファイル診断: ${file.name} ---`);
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const dataView = new DataView(arrayBuffer);
+                const totalLength = dataView.getUint32(8, true);
+                let offset = 12;
+                let json = null;
+
+                while (offset < totalLength) {
+                    const chunkLength = dataView.getUint32(offset, true);
+                    const chunkType = dataView.getUint32(offset + 4, true);
+                    offset += 8;
+                    if (chunkType === 0x4E4F534A) { // JSON
+                        const jsonText = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset, chunkLength));
+                        json = JSON.parse(jsonText);
+                        break;
+                    }
+                    offset += chunkLength;
+                }
+
+                if (!json) {
+                    log("エラー: JSONチャンクが見つかりません。有効なGLB/VCIではない可能性があります。", "error");
+                    return;
+                }
+
+                log("JSON構造の解析に成功しました。");
+
+                // VCI Meta Check
+                if (json.extensions && json.extensions["VCAST_vci_meta"]) {
+                    const meta = json.extensions["VCAST_vci_meta"];
+                    log(`VCAST_vci_meta Ver: ${meta.specVersion || "不明"} (${meta.exporterVCIVersion || "不明"})`, "success");
+                    
+                    // Check Spec Version
+                    if (meta.specVersion !== "0.43" && meta.specVersion !== "0.4.3") {
+                         log(`警告: specVersion が ${meta.specVersion} です。0.43 が推奨されています。`, "warn");
+                    }
+
+                    if (!meta.title) log("警告: Titleが設定されていません。", "warn");
+                    
+                    // Thumbnail check
+                    if (meta.thumbnail !== undefined && meta.thumbnail !== -1) {
+                        if (json.textures && json.textures[meta.thumbnail]) {
+                            log(`  Thumbnail: Texture Index ${meta.thumbnail} (OK)`);
+                        } else {
+                            log(`  Thumbnail: Texture Index ${meta.thumbnail} (無効な参照)`, "error");
+                        }
+                    } else {
+                        log("  Thumbnail: 設定なし", "info");
+                    }
+
+                } else {
+                    log("情報: VCIメタデータはまだありません。", "info");
+                    // Pre-fill meta if VRM
+                    if(json.extensions && json.extensions.VRM && json.extensions.VRM.meta) {
+                        const vm = json.extensions.VRM.meta;
+                        if(vm.title && !metaTitle.value) metaTitle.value = vm.title;
+                        if(vm.author && !metaAuthor.value) metaAuthor.value = vm.author;
+                        log("VRMメタデータを入力フォームに反映しました。", "success");
+                    }
+                }
+
+                // VRM Check
+                if (json.extensions && json.extensions.VRM) {
+                    log("警告: extensions.VRM が含まれています。VCI化の際に削除されます。", "warn");
+                }
+
+            } catch (e) {
+                log(`解析エラー: ${e.message}`, "error");
+            }
+            log("-----------------------------");
+        }
+
+        // --- Conversion Logic ---
+        // (Original extractInitialMeta is merged into inspectFile basically, but kept simplistic logic for backward compat in conversion flow if needed)
+        async function extractInitialMeta(file) { /* ... (kept for safety but inspectFile does the job now) ... */ }
+
+        convertBtn.addEventListener('click', () => {
+            if (selectedFile) processGLB(selectedFile);
+            else alert("ファイルを選択してください");
+        });
+
+        async function processGLB(file) {
+            convertBtn.disabled = true;
+            convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            convertBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 変換中...';
+            
+            logs.innerHTML = ''; // Clear old logs
+            generatedBlob = null;
+
+            log(`変換プロセス開始: ${file.name}`);
+
+            try {
+                await new Promise(r => setTimeout(r, 100));
+
+                let thumbBuffer = null;
+                let thumbMime = null;
+                if (selectedThumbFile) {
+                    thumbBuffer = await selectedThumbFile.arrayBuffer();
+                    thumbMime = selectedThumbFile.type;
+                }
+
+                const arrayBuffer = await file.arrayBuffer();
+                const dataView = new DataView(arrayBuffer);
+                const totalLength = dataView.getUint32(8, true);
+                let offset = 12;
+                let jsonChunk = null;
+                let binChunk = null;
+
+                while (offset < totalLength) {
+                    const chunkLength = dataView.getUint32(offset, true);
+                    const chunkType = dataView.getUint32(offset + 4, true);
+                    offset += 8;
+                    if (chunkType === 0x4E4F534A) {
+                        const jsonBytes = new Uint8Array(arrayBuffer, offset, chunkLength);
+                        jsonChunk = JSON.parse(new TextDecoder().decode(jsonBytes));
+                    } else if (chunkType === 0x004E4942) {
+                        binChunk = new Uint8Array(arrayBuffer, offset, chunkLength);
+                    }
+                    offset += chunkLength;
+                }
+
+                if (!jsonChunk || !binChunk) throw new Error("JSON/BINチャンク破損");
+
+                // Check if already VCI, we might be "fixing" it or converting a raw GLB
+                // Logic essentially reconstructs VCI structure wrapping original content
+                const additionalBin = modifyJsonForVCI(jsonChunk, thumbBuffer, thumbMime, binChunk.byteLength);
+                const newVciBuffer = rebuildGLB(jsonChunk, binChunk, additionalBin);
+                
+                generatedBlob = new Blob([newVciBuffer], { type: 'application/octet-stream' });
+                generatedFileName = file.name.replace(/\.(glb|vrm|vci)$/i, '.vci');
+                fileInfo.textContent = `${generatedFileName} (${(generatedBlob.size / 1024).toFixed(1)} KB)`;
+                
+                resultSection.classList.remove('hidden');
+                log("変換完了！ 下記からダウンロードできます", "success");
+                resultSection.scrollIntoView({ behavior: 'smooth' });
+
+            } catch (err) {
+                log(err.message, 'error');
+            } finally {
+                convertBtn.disabled = false;
+                convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                convertBtn.innerHTML = '<i class="fas fa-magic"></i> <span>変換を実行する</span>';
+            }
+        }
+
+        function modifyJsonForVCI(json, thumbBuffer, thumbMime, originalBinLength) {
+            // --- VRM Check & Cleanup Setup ---
+            const isVRM = json.extensions && json.extensions.VRM;
+            let vrmTitle = "";
+            let vrmAuthor = "";
+            if (isVRM && json.extensions.VRM.meta) {
+                vrmTitle = json.extensions.VRM.meta.title || "";
+                vrmAuthor = json.extensions.VRM.meta.author || "";
+            }
+
+            // --- VRM Cleanup Execution ---
+            if (isVRM) {
+                delete json.extensions.VRM;
+                if (Array.isArray(json.extensionsUsed)) {
+                    json.extensionsUsed = json.extensionsUsed.filter(e => e !== "VRM");
+                }
+                if (Array.isArray(json.extensionsRequired)) {
+                    json.extensionsRequired = json.extensionsRequired.filter(e => e !== "VRM");
+                }
+                log("VRM拡張を削除しました (extensions.VRM removed)", "warn");
+            }
+
+            const settingTitle = metaTitle.value || vrmTitle || "Converted VCI";
+            const settingVersion = metaVersion.value || "1.0";
+            const settingAuthor = metaAuthor.value || vrmAuthor || "Unknown";
+            const settingContact = metaContact.value || "";
+            const settingReference = metaReference.value || "";
+            const settingDescription = metaDescription.value || `Converted from ${selectedFile.name}`;
+            
+            const settingModelLicenseType = licenseModelType.value;
+            const settingModelLicenseUrl = licenseModelUrl.value || "";
+            const settingScriptLicenseType = licenseScriptType.value;
+            const settingScriptLicenseUrl = licenseScriptUrl.value || "";
+            const settingScriptProtected = scriptProtected.checked;
+            const settingScriptDebugging = scriptDebugging.checked;
+
+            const settingScale = parseFloat(scaleInput.value) || 1.0; // Get slider scale
+            const settingHeight = parseFloat(heightInput.value) || 0.0; // Get slider height
+            const settingLayer = layerSelect.value;
+            const layerMap = { "Default": "default", "VCIAccessory": "accessory", "VCIItem": "item", "VCIPickUp": "pickup", "Location": "location" };
+            const colliderLayerKey = layerMap[settingLayer] || "default";
+            const settingAttractable = attractableToggle.checked;
+
+            // Viewer Fix (glTF Standard Materials)
+            let gltfFixCount = 0;
+            if (json.extensions && json.extensions.VRM && Array.isArray(json.extensions.VRM.materialProperties) && Array.isArray(json.materials)) {
+                const vrmMats = json.extensions.VRM.materialProperties;
+                json.materials.forEach((mat, idx) => {
+                    const mp = vrmMats[idx];
+                    if (!mp || !mp.floatProperties) return;
+                    const f = mp.floatProperties;
+                    if (f._BlendMode == 2 && f._ZWrite == 0) {
+                        mat.alphaMode = "MASK";
+                        const cutoff = (typeof f._Cutoff == "number") ? f._Cutoff : 0.5;
+                        if (mat.alphaCutoff == null) mat.alphaCutoff = cutoff;
+                        gltfFixCount++;
+                    }
+                });
+            }
+            if(gltfFixCount > 0) log(`Webプレビュー用: ${gltfFixCount}個のマテリアル補正`);
+
+            // Thumbnail
+            let thumbTextureIndex = -1;
+            let additionalBin = null;
+            if (thumbBuffer && thumbMime) {
+                json.bufferViews = json.bufferViews || [];
+                json.images = json.images || [];
+                json.textures = json.textures || [];
+                const originalPadding = (4 - (originalBinLength % 4)) % 4;
+                const alignedOffset = originalBinLength + originalPadding;
+                const newBufferViewIndex = json.bufferViews.length;
+                json.bufferViews.push({ buffer: 0, byteOffset: alignedOffset, byteLength: thumbBuffer.byteLength });
+                const newImageIndex = json.images.length;
+                json.images.push({ bufferView: newBufferViewIndex, mimeType: thumbMime });
+                const newTextureIndex = json.textures.length;
+                json.textures.push({ source: newImageIndex });
+                thumbTextureIndex = newTextureIndex;
+                additionalBin = new Uint8Array(thumbBuffer);
+                log("サムネイル画像を埋め込みました");
+            }
+
+            // Meta (Updated to 0.43)
+            json.extensions = json.extensions || {};
+            json.extensions["VCAST_vci_meta"] = {
+                exporterVCIVersion: "UniVCI-0.43", // Change to UniVCI format to fix int.Parse error
+                specVersion: "0.43",
+                version: "1",
+                title: settingTitle,
+                version: settingVersion,
+                author: settingAuthor,
+                contactInformation: settingContact,
+                reference: settingReference,
+                description: settingDescription,
+                thumbnail: thumbTextureIndex,
+                modelDataLicenseType: settingModelLicenseType,
+                modelDataOtherLicenseUrl: settingModelLicenseUrl,
+                scriptLicenseType: settingScriptLicenseType,
+                scriptOtherLicenseUrl: settingScriptLicenseUrl,
+                scriptWriteProtected: settingScriptProtected,
+                scriptEnableDebugging: settingScriptDebugging
+            };
+
+            json.extensionsUsed = json.extensionsUsed || [];
+            ["VCAST_vci_meta", "VCAST_vci_item", "VCAST_vci_collider", "VCAST_vci_material_unity", "VCAST_vci_rigidbody"].forEach(e => {
+                if(!json.extensionsUsed.includes(e)) json.extensionsUsed.push(e);
+            });
+
+            // --- RESTRUCTURE NODE HIERARCHY ---
+            const originalRootNodes = json.scenes[0].nodes.slice(); 
+
+            // Container Node (Model Content) gets the Scale ONLY (Height moved to root)
+            const containerNodeIndex = json.nodes.length;
+            const containerNode = {
+                name: settingTitle || "Model", 
+                children: originalRootNodes,
+                translation: [0, 0, 0], // Height removed from here
+                rotation: [0, 0, 0, 1],
+                scale: [settingScale, settingScale, settingScale] // Scale remains here
+            };
+            json.nodes.push(containerNode);
+
+            // SubItem Node (root) gets Height
+            const subItemNodeIndex = json.nodes.length;
+            const subItemNode = {
+                name: "root",
+                children: [containerNodeIndex], 
+                translation: [0, settingHeight, 0], // Height applied here
+                rotation: [0, 0, 0, 1],
+                scale: [1, 1, 1], 
+                extensions: {
+                    "VCAST_vci_item": {
+                        grabbable: true,
+                        scalable: scalingToggle.checked,
+                        uniformScaling: uniformScalingToggle.checked,
+                        attractable: settingAttractable,
+                        groupId: 0
+                    }
+                }
+            };
+
+            // Collider Calculation (Must apply scale/offset to root collider)
+            let meshNodeIndex = -1;
+            function findMeshIndex(indices) {
+                for (let i of indices) {
+                    if (json.nodes[i].mesh !== undefined) return i;
+                    if (json.nodes[i].children) {
+                        const found = findMeshIndex(json.nodes[i].children);
+                        if (found !== -1) return found;
+                    }
+                }
+                return -1;
+            }
+            meshNodeIndex = findMeshIndex(originalRootNodes);
+
+            let center = [0,0,0], size = [0.1,0.1,0.1];
+            if (meshNodeIndex >= 0) {
+                const meshNode = json.nodes[meshNodeIndex];
+                const mesh = json.meshes[meshNode.mesh];
+                if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
+                    const acc = json.accessors[mesh.primitives[0].attributes.POSITION];
+                    if (acc.min && acc.max) {
+                        // Original mesh local bounds
+                        center = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
+                        size = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
+                        if (meshNode.scale) { for(let i=0; i<3; i++) { size[i] *= meshNode.scale[i]; center[i] *= meshNode.scale[i]; } }
+                        if (meshNode.translation) { for(let i=0; i<3; i++) center[i] += meshNode.translation[i]; }
+                        
+                        // Apply Container Transform to these values for the Root Collider
+                        for(let i=0; i<3; i++) {
+                            size[i] *= settingScale;
+                            center[i] *= settingScale;
+                        }
+                        // center[1] += settingHeight; // Height moved to root, so local collider offset is 0 relative to mesh
+                    }
+                }
+            }
+
+            subItemNode.extensions["VCAST_vci_collider"] = {
+                colliders: [{ type: "box", layer: colliderLayerKey, center: center, shape: size, isTrigger: triggerToggle.checked }]
+            };
+
+            subItemNode.extensions["VCAST_vci_rigidbody"] = {
+                rigidbodies: [{
+                    mass: 1, drag: 0, angularDrag: 0.05,
+                    useGravity: gravityToggle.checked, isKinematic: kinematicToggle.checked,
+                    interpolate: "none", collisionDetection: "discrete",
+                    freezePositionX: false, freezePositionY: false, freezePositionZ: false,
+                    freezeRotationX: false, freezeRotationY: false, freezeRotationZ: false
+                }]
+            };
+
+            json.nodes.push(subItemNode);
+
+            // --- RECURSIVE COLLIDER LAYER APPLICATION ---
+            function addColliderToNode(nodeIndex) {
+                const node = json.nodes[nodeIndex];
+                
+                node.extensions = node.extensions || {};
+                if (node.extensions["VCAST_vci_collider"]) return; 
+
+                let localCenter = [0,0,0];
+                let localSize = [0.01,0.01,0.01]; 
+                let isTrigger = true;
+
+                if (node.mesh !== undefined) {
+                    const mesh = json.meshes[node.mesh];
+                    if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
+                        const acc = json.accessors[mesh.primitives[0].attributes.POSITION];
+                        if (acc.min && acc.max) {
+                            localCenter = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
+                            localSize = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
+                        }
+                    }
+                    isTrigger = triggerToggle.checked;
+                }
+
+                node.extensions["VCAST_vci_collider"] = {
+                    colliders: [{ 
+                        type: "box", 
+                        layer: colliderLayerKey, 
+                        center: localCenter, 
+                        shape: localSize,    
+                        isTrigger: isTrigger 
+                    }]
+                };
+
+                if (node.children && node.children.length > 0) {
+                    node.children.forEach(childIndex => addColliderToNode(childIndex));
+                }
+            }
+
+            addColliderToNode(containerNodeIndex);
+
+            json.scenes[0].nodes = [subItemNodeIndex];
+            
+            addUnityMaterialExtension(json);
+            return additionalBin;
+        }
+
+        function addUnityMaterialExtension(json) {
+            json.extensions = json.extensions || {};
+            if (json.extensions["VCAST_vci_material_unity"]) return;
+
+            let unityMats = [];
+            let fixedCount = 0;
+
+            if (json.extensions && json.extensions.VRM && Array.isArray(json.extensions.VRM.materialProperties)) {
+                log("VRM拡張データを確認しました...");
+                const vrmMats = json.extensions.VRM.materialProperties;
+                const gltfMats = json.materials || [];
+
+                unityMats = vrmMats.map((src, idx) => {
+                    const mp = src || {};
+                    const floatProps = Object.assign({}, mp.floatProperties || {});
+                    const vectorProps = Object.assign({}, mp.vectorProperties || {});
+                    const texProps = Object.assign({}, mp.textureProperties || {});
+                    const keywordMap = Object.assign({}, mp.keywordMap || {});
+                    const tagMap = Object.assign({}, mp.tagMap || {});
+
+                    if (floatProps._BlendMode == 2 && floatProps._ZWrite == 0) {
+                        log(`  [修正] ${mp.name || idx}: Transparent -> Cutout に変更`);
+                        floatProps._BlendMode = 1; 
+                        floatProps._ZWrite = 1;
+                        if (floatProps._Cutoff == null) floatProps._Cutoff = 0.5;
+                        mp.renderQueue = (typeof mp.renderQueue == "number") ? mp.renderQueue : 2450;
+                        keywordMap._ALPHATEST_ON = true;
+                        delete keywordMap._ALPHABLEND_ON;
+                        delete keywordMap._ALPHAPREMULTIPLY_ON;
+                        fixedCount++;
+                    }
+
+                    return {
+                        name: mp.name || (gltfMats[idx] && gltfMats[idx].name) || `material_${idx}`,
+                        shader: mp.shader || "VRM/MToon",
+                        renderQueue: (typeof mp.renderQueue === "number") ? mp.renderQueue : 2000,
+                        floatProperties: floatProps, vectorProperties: vectorProps,
+                        textureProperties: texProps, keywordMap: keywordMap, tagMap: tagMap
+                    };
+                });
+                log(`VCI用: 合計 ${fixedCount} 個のマテリアルを補正しました`);
+            } else {
+                log("VRM拡張が見つかりません。標準変換を行います。");
+                const materials = json.materials || [];
+                unityMats = materials.map((m, i) => ({
+                    name: m.name || `material_${i}`,
+                    shader: "VRM_USE_GLTFSHADER", renderQueue: 2000,
+                    floatProperties: {}, vectorProperties: {}, textureProperties: {}, keywordMap: {}, tagMap: {}
+                }));
+            }
+            json.extensions["VCAST_vci_material_unity"] = { materials: unityMats };
+        }
+
+        function rebuildGLB(json, binChunk, additionalBin) {
+            const jsonString = JSON.stringify(json);
+            const encoder = new TextEncoder();
+            let jsonBytes = encoder.encode(jsonString);
+            const jsonPadding = (4 - (jsonBytes.length % 4)) % 4;
+            if (jsonPadding > 0) {
+                const newJson = new Uint8Array(jsonBytes.length + jsonPadding);
+                newJson.set(jsonBytes);
+                for(let i=0; i<jsonPadding; i++) newJson[jsonBytes.length+i] = 0x20;
+                jsonBytes = newJson;
+            }
+
+            let binLength = binChunk.byteLength;
+            const binPadding = (4 - (binLength % 4)) % 4;
+            let additionalLength = additionalBin ? additionalBin.byteLength : 0;
+            const combinedBinLength = binLength + binPadding + additionalLength;
+            const totalBinPadding = (4 - (combinedBinLength % 4)) % 4;
+            const finalBinLength = combinedBinLength + totalBinPadding;
+
+            if (json.buffers && json.buffers[0]) json.buffers[0].byteLength = finalBinLength;
+
+            const buffer = new ArrayBuffer(12 + 8 + jsonBytes.length + 8 + finalBinLength);
+            const view = new DataView(buffer);
+            
+            let offset = 0;
+            view.setUint32(0, 0x46546C67, true);
+            view.setUint32(4, 2, true);
+            view.setUint32(8, buffer.byteLength, true);
+            offset += 12;
+
+            view.setUint32(offset, jsonBytes.length, true);
+            view.setUint32(offset+4, 0x4E4F534A, true);
+            offset += 8;
+            new Uint8Array(buffer, offset, jsonBytes.length).set(jsonBytes);
+            offset += jsonBytes.length;
+
+            view.setUint32(offset, finalBinLength, true);
+            view.setUint32(offset+4, 0x004E4942, true);
+            offset += 8;
+
+            const binArray = new Uint8Array(buffer, offset, finalBinLength);
+            binArray.set(binChunk, 0);
+            for(let i=0; i<binPadding; i++) binArray[binLength+i] = 0x00;
+            if (additionalBin) binArray.set(additionalBin, binLength + binPadding);
+            return buffer;
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            if (!generatedBlob) {
+                alert("ファイルが生成されていません。変換を実行してください。");
+                return;
+            }
+            const url = URL.createObjectURL(generatedBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = generatedFileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
     <!-- Import Map for stable module loading -->
