@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VRM/GLB to VCI Converter (v4.3)</title>
+    <title>VRM/GLB to VCI Converter (v4.6)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -46,14 +46,23 @@
         input:checked ~ .dot {
             transform: translateX(1.25rem); 
         }
+
+        /* Simple Fade In Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
 
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v4.3 (Log & DL Fix)</span></h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v4.6 (All Node Layers)</span></h1>
         <p class="text-gray-600 mb-6 text-sm">
-            VRM/GLBをVCIに変換します。
+            VRM/GLBをVCIに変換します。VRMファイルも同様の階層構造で変換されます。
         </p>
 
         <!-- 1. Upload & Viewer Zone -->
@@ -191,7 +200,7 @@
                                     <option value="cc_by_nc">CC_BY_NC</option>
                                     <option value="cc_by_sa">CC_BY_SA</option>
                                     <option value="cc_by_nc_sa">CC_BY_NC_SA</option>
-                                    <option value="cc_by_nd">CC_BY_ND</option>
+                                    <option value="cc_by_nd">CC_BY_NC_ND</option>
                                     <option value="cc_by_nc_nd">CC_BY_NC_ND</option>
                                     <option value="other">Other</option>
                                 </select>
@@ -286,6 +295,16 @@
                                     <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
                                 </div>
                             </label>
+                            
+                            <!-- Attractable: Default ON -->
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Attractable (引き寄せ)</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="attractable-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -351,6 +370,7 @@
         const kinematicToggle = document.getElementById('kinematic-toggle');
         const gravityToggle = document.getElementById('gravity-toggle');
         const triggerToggle = document.getElementById('trigger-toggle');
+        const attractableToggle = document.getElementById('attractable-toggle');
         const scaleInput = document.getElementById('scale-input');
         
         const metaTitle = document.getElementById('meta-title');
@@ -660,6 +680,7 @@
             const settingLayer = layerSelect.value;
             const layerMap = { "Default": "default", "VCIAccessory": "accessory", "VCIItem": "item", "VCIPickUp": "pickup", "Location": "location" };
             const colliderLayerKey = layerMap[settingLayer] || "default";
+            const settingAttractable = attractableToggle.checked; // Get Attractable Value
 
             // Viewer Fix (glTF Standard Materials)
             let gltfFixCount = 0;
@@ -716,25 +737,56 @@
                 if(!json.extensionsUsed.includes(e)) json.extensionsUsed.push(e);
             });
 
-            // Root & Scale
-            let vciRootNodeIndex = 0;
-            if (json.scenes && json.scenes.length > 0 && json.scenes[0].nodes && json.scenes[0].nodes.length > 0) {
-                vciRootNodeIndex = json.scenes[0].nodes[0];
-            }
-            const rootNode = json.nodes[vciRootNodeIndex];
-            rootNode.extensions = rootNode.extensions || {};
-            const currentScale = rootNode.scale || [1, 1, 1];
-            rootNode.scale = [currentScale[0] * settingScale, currentScale[1] * settingScale, currentScale[2] * settingScale];
+            // --- RESTRUCTURE NODE HIERARCHY ---
+            // 1. Get original root nodes
+            const originalRootNodes = json.scenes[0].nodes.slice(); // Copy
 
-            rootNode.extensions["VCAST_vci_item"] = {
-                grabbable: true, scalable: scalingToggle.checked, uniformScaling: uniformScalingToggle.checked, attractable: false, groupId: 0
+            // 2. Create "Container" Node (named after Title)
+            const containerNodeIndex = json.nodes.length;
+            const containerNode = {
+                name: settingTitle || "Model", 
+                children: originalRootNodes,
+                translation: [0, 0, 0],
+                rotation: [0, 0, 0, 1],
+                scale: [1, 1, 1]
+            };
+            json.nodes.push(containerNode);
+
+            // 3. Create "SubItem" Node (named "root")
+            const subItemNodeIndex = json.nodes.length;
+            const subItemNode = {
+                name: "root",
+                children: [containerNodeIndex], // Container is child of root
+                translation: [0, 0, 0],
+                rotation: [0, 0, 0, 1],
+                scale: [settingScale, settingScale, settingScale], // Apply scale here
+                extensions: {
+                    "VCAST_vci_item": {
+                        grabbable: true,
+                        scalable: scalingToggle.checked,
+                        uniformScaling: uniformScalingToggle.checked,
+                        attractable: settingAttractable, // Use Checked Value
+                        groupId: 0
+                    }
+                }
             };
 
-            // Collider
+            // Collider Calculation (Approximate based on first mesh found in original nodes)
             let meshNodeIndex = -1;
-            if (json.nodes) meshNodeIndex = json.nodes.findIndex(n => n && n.mesh !== undefined);
+            function findMeshIndex(indices) {
+                for (let i of indices) {
+                    if (json.nodes[i].mesh !== undefined) return i;
+                    if (json.nodes[i].children) {
+                        const found = findMeshIndex(json.nodes[i].children);
+                        if (found !== -1) return found;
+                    }
+                }
+                return -1;
+            }
+            meshNodeIndex = findMeshIndex(originalRootNodes);
+
             let center = [0,0,0], size = [0.1,0.1,0.1];
-            if (meshNodeIndex >= 0 && json.nodes[meshNodeIndex]) {
+            if (meshNodeIndex >= 0) {
                 const meshNode = json.nodes[meshNodeIndex];
                 const mesh = json.meshes[meshNode.mesh];
                 if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
@@ -742,16 +794,19 @@
                     if (acc.min && acc.max) {
                         center = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
                         size = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
+                        // Apply mesh node local scale if exists
                         if (meshNode.scale) { for(let i=0; i<3; i++) { size[i] *= meshNode.scale[i]; center[i] *= meshNode.scale[i]; } }
+                        // If mesh node has translation, add to center
+                        if (meshNode.translation) { for(let i=0; i<3; i++) center[i] += meshNode.translation[i]; }
                     }
                 }
             }
 
-            rootNode.extensions["VCAST_vci_collider"] = {
+            subItemNode.extensions["VCAST_vci_collider"] = {
                 colliders: [{ type: "box", layer: colliderLayerKey, center: center, shape: size, isTrigger: triggerToggle.checked }]
             };
 
-            rootNode.extensions["VCAST_vci_rigidbody"] = {
+            subItemNode.extensions["VCAST_vci_rigidbody"] = {
                 rigidbodies: [{
                     mass: 1, drag: 0, angularDrag: 0.05,
                     useGravity: gravityToggle.checked, isKinematic: kinematicToggle.checked,
@@ -761,6 +816,60 @@
                 }]
             };
 
+            json.nodes.push(subItemNode);
+
+            // --- RECURSIVE COLLIDER LAYER APPLICATION ---
+            // Function to add collider extension to a specific node (using its mesh AABB)
+            function addColliderToNode(nodeIndex) {
+                const node = json.nodes[nodeIndex];
+                
+                // 既存の設定があればスキップ（rootなど）
+                node.extensions = node.extensions || {};
+                if (node.extensions["VCAST_vci_collider"]) return; 
+
+                let localCenter = [0,0,0];
+                let localSize = [0.01,0.01,0.01]; // Default small size for empty nodes
+                let isTrigger = true; // Default for empty nodes: trigger to avoid physics collision
+
+                if (node.mesh !== undefined) {
+                    const mesh = json.meshes[node.mesh];
+                    
+                    if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
+                        const acc = json.accessors[mesh.primitives[0].attributes.POSITION];
+                        if (acc.min && acc.max) {
+                            localCenter = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
+                            localSize = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
+                        }
+                    }
+                    // メッシュがある場合はユーザー設定のTrigger設定を使用
+                    isTrigger = triggerToggle.checked;
+                }
+
+                // Ensure extensions object exists and add collider
+                node.extensions["VCAST_vci_collider"] = {
+                    colliders: [{ 
+                        type: "box", 
+                        layer: colliderLayerKey, 
+                        center: localCenter, 
+                        shape: localSize,    
+                        isTrigger: isTrigger 
+                    }]
+                };
+
+                // Recursively apply to children
+                if (node.children && node.children.length > 0) {
+                    node.children.forEach(childIndex => addColliderToNode(childIndex));
+                }
+            }
+
+            // Start recursive application from the Container Node (which holds all original nodes)
+            // This will apply to "Container" (Title) and all children including meshes and empty nodes
+            addColliderToNode(containerNodeIndex);
+
+
+            // 4. Update Scene to point to ONLY the new "root" node
+            json.scenes[0].nodes = [subItemNodeIndex];
+            
             addUnityMaterialExtension(json);
             return additionalBin;
         }
