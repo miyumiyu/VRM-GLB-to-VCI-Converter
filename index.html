@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VRM/GLB to VCI Converter (v5.2)</title>
+    <title>VRM/GLB to VCI Converter (v5.4)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -78,9 +78,9 @@
 <body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
 
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.2 (Height & Ref Drag)</span></h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.4 (Apply to Container)</span></h1>
         <p class="text-gray-600 mb-6 text-sm">
-            VRM/GLBをVCI(Spec 0.43)に変換します。サイズと高さを調整可能。青い人型はドラッグで移動できます。
+            VRM/GLBをVCI(Spec 0.43)に変換します。スケールと高さ調整はルートではなく、モデル格納ノードに適用されます。
         </p>
 
         <!-- 1. Upload & Viewer Zone -->
@@ -236,7 +236,7 @@
                                     <option value="cc_by_nc">CC_BY_NC</option>
                                     <option value="cc_by_sa">CC_BY_SA</option>
                                     <option value="cc_by_nc_sa">CC_BY_NC_SA</option>
-                                    <option value="cc_by_nd">CC_BY_ND</option>
+                                    <option value="cc_by_nd">CC_BY_NC_ND</option>
                                     <option value="cc_by_nc_nd">CC_BY_NC_ND</option>
                                     <option value="other">Other</option>
                                 </select>
@@ -550,7 +550,10 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            if(currentModel && currentModel.update) currentModel.update(0.016);
+            if(currentModel && currentModel.scene) {
+                // Animation mix for VRM might be needed but for static props just render
+                // If VRM instance, use vrm.update(delta)
+            }
             renderer.render(scene, camera);
         }
 
@@ -704,15 +707,37 @@
 
                 const box = new THREE.Box3().setFromObject(model);
                 const center = box.getCenter(new THREE.Vector3());
-                
-                // Move camera to frame the object
                 const size = box.getSize(new THREE.Vector3());
-                const maxDim = Math.max(size.x, size.y, size.z);
+
+                // --- Auto Resize Logic for Giant Models ---
+                const maxDimension = Math.max(size.x, size.y, size.z);
+                const LIMIT_SIZE = 10.0; // 10m limit
+                
+                if (maxDimension > LIMIT_SIZE) {
+                    const autoScale = LIMIT_SIZE / maxDimension;
+                    model.scale.set(autoScale, autoScale, autoScale);
+                    
+                    // UI更新
+                    setScale(autoScale); 
+                    log(`モデルが巨大(${maxDimension.toFixed(2)}m)なため、${LIMIT_SIZE}m以下に自動縮小しました (Scale: ${autoScale.toFixed(4)}x)`, "warn");
+                    
+                    // Update box/size/center based on new scale for camera positioning
+                    box.setFromObject(model);
+                    box.getCenter(center);
+                    box.getSize(size);
+                }
+
+                // --- Dynamic Camera Adjustment ---
+                const newMaxDim = Math.max(size.x, size.y, size.z);
+                // Extend Far clipping plane based on model size to prevent clipping
+                camera.far = Math.max(50, newMaxDim * 50); 
+                camera.updateProjectionMatrix();
+
                 const fov = camera.fov * (Math.PI / 180);
-                let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                let cameraZ = Math.abs(newMaxDim / 2 / Math.tan(fov / 2));
                 cameraZ *= 1.5; // zoom out a bit
                 
-                camera.position.set(center.x, center.y + size.y/2, cameraZ + center.z + 1); // Slight offset
+                camera.position.set(center.x, center.y + size.y/2, cameraZ + center.z); // Slight offset
                 camera.lookAt(center);
                 controls.target.copy(center);
                 controls.update();
@@ -1014,23 +1039,25 @@
             // --- RESTRUCTURE NODE HIERARCHY ---
             const originalRootNodes = json.scenes[0].nodes.slice(); 
 
+            // Container Node (Model Content) gets the Scale/Height
             const containerNodeIndex = json.nodes.length;
             const containerNode = {
                 name: settingTitle || "Model", 
                 children: originalRootNodes,
-                translation: [0, 0, 0],
+                translation: [0, settingHeight, 0], // Apply Height here
                 rotation: [0, 0, 0, 1],
-                scale: [1, 1, 1]
+                scale: [settingScale, settingScale, settingScale] // Apply Scale here
             };
             json.nodes.push(containerNode);
 
+            // SubItem Node (root) remains Identity
             const subItemNodeIndex = json.nodes.length;
             const subItemNode = {
                 name: "root",
                 children: [containerNodeIndex], 
-                translation: [0, settingHeight, 0], // Apply Height here
+                translation: [0, 0, 0],
                 rotation: [0, 0, 0, 1],
-                scale: [settingScale, settingScale, settingScale],
+                scale: [1, 1, 1], 
                 extensions: {
                     "VCAST_vci_item": {
                         grabbable: true,
@@ -1042,7 +1069,7 @@
                 }
             };
 
-            // Collider Calculation
+            // Collider Calculation (Must apply scale/offset to root collider)
             let meshNodeIndex = -1;
             function findMeshIndex(indices) {
                 for (let i of indices) {
@@ -1063,10 +1090,18 @@
                 if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
                     const acc = json.accessors[mesh.primitives[0].attributes.POSITION];
                     if (acc.min && acc.max) {
+                        // Original mesh local bounds
                         center = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
                         size = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
                         if (meshNode.scale) { for(let i=0; i<3; i++) { size[i] *= meshNode.scale[i]; center[i] *= meshNode.scale[i]; } }
                         if (meshNode.translation) { for(let i=0; i<3; i++) center[i] += meshNode.translation[i]; }
+                        
+                        // Apply Container Transform to these values for the Root Collider
+                        for(let i=0; i<3; i++) {
+                            size[i] *= settingScale;
+                            center[i] *= settingScale;
+                        }
+                        center[1] += settingHeight;
                     }
                 }
             }
