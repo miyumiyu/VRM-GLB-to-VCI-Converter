@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VRM/GLB to VCI Converter (v5.1)</title>
+    <title>VRM/GLB to VCI Converter (v5.2)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -78,9 +78,9 @@
 <body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
 
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.1 (Fix Preview Error)</span></h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.2 (Height & Ref Drag)</span></h1>
         <p class="text-gray-600 mb-6 text-sm">
-            VRM/GLBをVCI(Spec 0.43)に変換します。ビューアー上で実際のサイズ感を確認しながらスケール調整が可能です。
+            VRM/GLBをVCI(Spec 0.43)に変換します。サイズと高さを調整可能。青い人型はドラッグで移動できます。
         </p>
 
         <!-- 1. Upload & Viewer Zone -->
@@ -99,7 +99,7 @@
             <div id="viewer-section" class="hidden mt-4 bg-gray-100 rounded-lg p-2 border border-gray-200 relative animate-fade-in">
                 <div class="absolute top-4 right-4 z-10 flex space-x-2">
                     <div class="bg-black bg-opacity-50 text-white px-3 py-1 rounded text-xs font-mono pointer-events-none backdrop-blur-sm">
-                        Height: <span id="model-height-display">--</span> m
+                        Size(H): <span id="model-height-display">--</span> m
                     </div>
                     <button id="change-file-btn" class="bg-white bg-opacity-90 hover:bg-opacity-100 text-gray-700 px-4 py-2 rounded shadow text-xs font-bold transition-all flex items-center">
                         <i class="fas fa-sync-alt mr-2"></i>ファイルを変更
@@ -109,21 +109,41 @@
                 <!-- Three.js Canvas -->
                 <div id="three-container"></div>
 
-                <!-- Scale Slider Control (Overlay) -->
-                <div class="bg-white p-3 mt-2 rounded border border-gray-200 flex flex-col gap-2">
-                    <div class="flex justify-between items-center">
-                        <label class="text-xs font-bold text-gray-700"><i class="fas fa-ruler-combined mr-1"></i>スケール調整 (Scale)</label>
-                        <span id="scale-value-display" class="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">1.00x</span>
+                <!-- Transform Controls (Overlay) -->
+                <div class="bg-white p-3 mt-2 rounded border border-gray-200 flex flex-col gap-3">
+                    
+                    <!-- Scale -->
+                    <div class="flex flex-col gap-1">
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs font-bold text-gray-700"><i class="fas fa-ruler-combined mr-1"></i>スケール (Scale)</label>
+                            <span id="scale-value-display" class="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">1.00x</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="scale-reset-btn" class="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600" title="リセット">1.0</button>
+                            <!-- Scale range 0.001 to 20.0 -->
+                            <input type="range" id="scale-slider" min="0.001" max="20.0" step="0.001" value="1.0" class="flex-1">
+                            <input type="number" id="scale-input" value="1.0" step="0.001" min="0.001" class="w-20 px-2 py-1 border border-gray-300 rounded text-xs text-center">
+                        </div>
                     </div>
-                    <div class="flex items-center gap-3">
-                        <button id="scale-reset-btn" class="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600" title="リセット">1.0</button>
-                        <input type="range" id="scale-slider" min="0.01" max="5.0" step="0.01" value="1.0" class="flex-1">
-                        <input type="number" id="scale-input" value="1.0" step="0.01" min="0.001" class="w-16 px-2 py-1 border border-gray-300 rounded text-xs text-center">
+
+                    <!-- Height (Y) -->
+                    <div class="flex flex-col gap-1 border-t border-gray-100 pt-2">
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs font-bold text-gray-700"><i class="fas fa-arrows-alt-v mr-1.5"></i>高さ調整 (Position Y)</label>
+                            <span id="height-value-display" class="text-xs font-mono font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">0.00m</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="height-reset-btn" class="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-600" title="リセット">0.0</button>
+                            <!-- Height range -5.0 to 5.0 -->
+                            <input type="range" id="height-slider" min="-5.0" max="5.0" step="0.01" value="0.0" class="flex-1">
+                            <input type="number" id="height-input" value="0.0" step="0.01" class="w-20 px-2 py-1 border border-gray-300 rounded text-xs text-center">
+                        </div>
                     </div>
-                    <p class="text-[10px] text-gray-400 text-right">※床のグリッドは1m間隔、点線は0.5m間隔です。半透明の人影は約1.6mです。</p>
+
+                    <p class="text-[10px] text-gray-400 text-right mt-1">※床のグリッドは1m間隔。青い人影(約1.6m)はドラッグで移動できます。</p>
                 </div>
 
-                <!-- Filename Display (Restored) -->
+                <!-- Filename Display -->
                 <div class="bg-white p-2 mt-2 rounded border border-gray-200 flex items-center justify-center space-x-2">
                     <i class="fas fa-check-circle text-green-500"></i>
                     <p class="text-center text-sm text-gray-700 font-bold" id="preview-filename">filename.vrm</p>
@@ -277,7 +297,7 @@
                             </div>
                             <!-- Scale Input removed from here (moved to viewer control) -->
                             <div class="flex flex-col justify-center">
-                                <p class="text-xs text-gray-500">※スケール設定はプレビュー画面のスライダーで行ってください</p>
+                                <p class="text-xs text-gray-500">※スケール・高さ設定はプレビュー画面のスライダーで行ってください</p>
                             </div>
                         </div>
 
@@ -372,6 +392,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { DragControls } from 'three/addons/controls/DragControls.js'; // Add DragControls
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
@@ -410,11 +431,16 @@
         const triggerToggle = document.getElementById('trigger-toggle');
         const attractableToggle = document.getElementById('attractable-toggle');
         
-        // Scale Controls
+        // Transform Controls
         const scaleSlider = document.getElementById('scale-slider');
         const scaleInput = document.getElementById('scale-input');
         const scaleValueDisplay = document.getElementById('scale-value-display');
         const scaleResetBtn = document.getElementById('scale-reset-btn');
+
+        const heightSlider = document.getElementById('height-slider');
+        const heightInput = document.getElementById('height-input');
+        const heightValueDisplay = document.getElementById('height-value-display');
+        const heightResetBtn = document.getElementById('height-reset-btn');
         
         const metaTitle = document.getElementById('meta-title');
         const metaVersion = document.getElementById('meta-version');
@@ -477,21 +503,16 @@
             const geometry = new THREE.CylinderGeometry(0.25, 0.25, 1.6, 32);
             const material = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3 });
             referenceHuman = new THREE.Mesh(geometry, material);
-            referenceHuman.position.set(2, 0.8, 0); // Offset to side, center y at 0.8
+            referenceHuman.position.set(2, 0.8, 0); // Offset to side, center y at 0.8 (0.8 * 2 = 1.6m)
             // Add a head
             const headGeo = new THREE.SphereGeometry(0.2, 32, 32);
             const headMesh = new THREE.Mesh(headGeo, material);
-            headMesh.position.y = 0.9; // relative to body center (0.8 + 0.8 + 0.1?? No, cylinder height 1.6 -> top is 1.6. Head center at 1.7)
-            // Fix: Cylinder y=0.8 means top is 1.6. Head radius 0.2. Center head at 1.7.
-            referenceHuman.position.y = 0.8; 
-            headMesh.position.set(0, 0.9, 0); // local to cylinder
+            // Fix: Cylinder y=0.8 means top is 1.6. Head radius 0.2. Center head at 1.7 relative to 0.
+            // Local pos from cylinder center(0.8): 1.7 - 0.8 = 0.9
+            headMesh.position.set(0, 0.9, 0); 
             referenceHuman.add(headMesh);
             
-            // Add Text Label for Human
-            // (Using sprite for simplicity would be good but let's just keep it abstract or console log)
-            
             scene.add(referenceHuman);
-
 
             camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
             camera.position.set(0, 2.0, 5.0);
@@ -504,6 +525,21 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.target.set(0, 1.0, 0);
             controls.update();
+
+            // --- Drag Controls for Reference Human ---
+            const dControls = new DragControls([referenceHuman], camera, renderer.domElement);
+            dControls.addEventListener('dragstart', function (event) {
+                controls.enabled = false; // Disable orbit
+                event.object.material.opacity = 0.5;
+            });
+            dControls.addEventListener('drag', function (event) {
+                // Lock Y axis to floor level (0.8 for cylinder center)
+                event.object.position.y = 0.8; 
+            });
+            dControls.addEventListener('dragend', function (event) {
+                controls.enabled = true; // Enable orbit
+                event.object.material.opacity = 0.3;
+            });
 
             window.addEventListener('resize', onWindowResize);
             onWindowResize();
@@ -518,26 +554,54 @@
             renderer.render(scene, camera);
         }
 
-        // --- Scale Logic ---
-        function updateScale(val) {
-            const scale = parseFloat(val);
-            if (isNaN(scale) || scale <= 0) return;
+        // --- Transform Logic (Scale & Height) ---
+        function updateTransform() {
+            if (!currentModel || !currentModel.scene) return;
 
-            // Update UI
-            scaleSlider.value = scale;
-            scaleInput.value = scale;
-            scaleValueDisplay.textContent = `${scale.toFixed(2)}x`;
+            const scale = parseFloat(scaleInput.value);
+            const height = parseFloat(heightInput.value);
 
-            // Update Model in Viewer
-            if (currentModel && currentModel.scene) {
+            if (!isNaN(scale) && scale > 0) {
                 currentModel.scene.scale.set(
                     originalModelScale.x * scale, 
                     originalModelScale.y * scale, 
                     originalModelScale.z * scale
                 );
-                updateModelHeightDisplay();
             }
+
+            if (!isNaN(height)) {
+                currentModel.scene.position.y = height;
+            }
+
+            updateModelHeightDisplay();
         }
+
+        // Scale Handlers
+        function setScale(val) {
+            const scale = parseFloat(val);
+            if (isNaN(scale) || scale <= 0) return;
+            scaleSlider.value = scale;
+            scaleInput.value = scale;
+            scaleValueDisplay.textContent = `${scale.toFixed(2)}x`;
+            updateTransform();
+        }
+        scaleSlider.addEventListener('input', (e) => setScale(e.target.value));
+        scaleInput.addEventListener('change', (e) => setScale(e.target.value));
+        scaleResetBtn.addEventListener('click', () => setScale(1.0));
+
+        // Height Handlers
+        function setHeight(val) {
+            const h = parseFloat(val);
+            if (isNaN(h)) return;
+            heightSlider.value = h;
+            heightInput.value = h;
+            heightValueDisplay.textContent = `${h.toFixed(2)}m`;
+            updateTransform();
+        }
+        heightSlider.addEventListener('input', (e) => setHeight(e.target.value));
+        heightInput.addEventListener('change', (e) => setHeight(e.target.value));
+        heightResetBtn.addEventListener('click', () => setHeight(0.0));
+
 
         function updateModelHeightDisplay() {
             if (!currentModel || !currentModel.scene) return;
@@ -546,10 +610,6 @@
             const height = box.max.y - box.min.y;
             modelHeightDisplay.textContent = height.toFixed(2);
         }
-
-        scaleSlider.addEventListener('input', (e) => updateScale(e.target.value));
-        scaleInput.addEventListener('change', (e) => updateScale(e.target.value));
-        scaleResetBtn.addEventListener('click', () => updateScale(1.0));
 
 
         // --- Event Listeners ---
@@ -620,8 +680,9 @@
                 currentModel = null;
             }
 
-            // Reset Scale UI
-            updateScale(1.0);
+            // Reset UI
+            setScale(1.0);
+            setHeight(0.0);
 
             const loader = new GLTFLoader();
             loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -660,6 +721,7 @@
                 
                 if(fileOrBlob instanceof File) {
                     previewFilename.textContent = fileOrBlob.name;
+                    // Only auto-fill meta title if it's not a re-drop of VCI (which might have complex name)
                     if (!metaTitle.value) metaTitle.value = fileOrBlob.name.replace(/\.(glb|vrm|vci)$/i, '');
                 }
             }, 
@@ -879,6 +941,7 @@
             const settingScriptDebugging = scriptDebugging.checked;
 
             const settingScale = parseFloat(scaleInput.value) || 1.0; // Get slider scale
+            const settingHeight = parseFloat(heightInput.value) || 0.0; // Get slider height
             const settingLayer = layerSelect.value;
             const layerMap = { "Default": "default", "VCIAccessory": "accessory", "VCIItem": "item", "VCIPickUp": "pickup", "Location": "location" };
             const colliderLayerKey = layerMap[settingLayer] || "default";
@@ -965,7 +1028,7 @@
             const subItemNode = {
                 name: "root",
                 children: [containerNodeIndex], 
-                translation: [0, 0, 0],
+                translation: [0, settingHeight, 0], // Apply Height here
                 rotation: [0, 0, 0, 1],
                 scale: [settingScale, settingScale, settingScale],
                 extensions: {
