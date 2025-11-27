@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VRM/GLB to VCI Converter (v5.4)</title>
+    <title>VRM/GLB to VCI Converter (v5.6)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -78,7 +78,7 @@
 <body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
 
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.5 (Split Scale/Height)</span></h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.6 (Meta Refresh & Rename)</span></h1>
         <p class="text-gray-600 mb-6 text-sm">
             VRM/GLBをVCI(Spec 0.43)に変換します。スケールは格納ノード、高さはルートノードに適用されます。
         </p>
@@ -380,8 +380,18 @@
             <div id="logs" class="text-green-400 font-mono text-xs h-40 overflow-y-auto shadow-inner whitespace-pre-wrap"></div>
         </div>
 
-        <div id="result-section" class="hidden mt-2 text-center w-full pb-10">
-            <button id="download-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transform transition hover:-translate-y-1 flex items-center justify-center mx-auto gap-2">
+        <div id="result-section" class="hidden mt-2 text-center w-full pb-10 bg-green-50 rounded-lg p-6 border border-green-200">
+            <h3 class="text-gray-800 font-bold mb-4">変換完了</h3>
+            
+            <div class="flex flex-col items-center gap-3 mb-4 max-w-md mx-auto">
+                <label class="w-full text-left text-xs font-bold text-gray-600">出力ファイル名</label>
+                <div class="flex w-full">
+                    <input type="text" id="output-filename" class="flex-1 px-3 py-2 border border-gray-300 rounded-l text-sm focus:outline-none focus:border-blue-500 text-gray-700" placeholder="filename.vci">
+                    <span class="bg-gray-100 border border-l-0 border-gray-300 px-3 py-2 text-sm text-gray-500 rounded-r font-mono">.vci</span>
+                </div>
+            </div>
+
+            <button id="download-btn" class="w-full max-w-md bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transform transition hover:-translate-y-1 flex items-center justify-center mx-auto gap-2">
                 <i class="fas fa-download"></i>
                 <span>VCIファイルをダウンロード</span>
             </button>
@@ -420,6 +430,7 @@
         const resultSection = document.getElementById('result-section');
         const downloadBtn = document.getElementById('download-btn');
         const fileInfo = document.getElementById('file-info');
+        const outputFilenameInput = document.getElementById('output-filename');
 
         // Settings
         const layerSelect = document.getElementById('layer-select');
@@ -464,7 +475,7 @@
         let selectedFile = null;
         let selectedThumbFile = null;
         let generatedBlob = null;
-        let generatedFileName = "";
+        // let generatedFileName = ""; // Removed in favor of input
 
         // --- Initialization ---
         function onWindowResize() {
@@ -646,6 +657,34 @@
         scalingToggle.addEventListener('change', updateScalableSettings);
         updateScalableSettings();
 
+        // --- Helper: Reset Meta Fields ---
+        function resetMetaFields() {
+            metaTitle.value = "";
+            metaVersion.value = "1.0";
+            metaAuthor.value = "";
+            metaContact.value = "";
+            metaReference.value = "";
+            metaDescription.value = "";
+            
+            // Reset Thumbnail
+            selectedThumbFile = null;
+            thumbPreview.classList.add('hidden');
+            thumbPreview.src = "";
+            thumbPlaceholder.classList.remove('hidden');
+            thumbInput.value = "";
+
+            // Reset Licenses
+            licenseModelType.value = "cc0";
+            licenseModelUrl.value = "";
+            licenseScriptType.value = "cc0";
+            licenseScriptUrl.value = "";
+            scriptProtected.checked = false;
+            scriptDebugging.checked = false;
+            
+            // Reset Log
+            logs.innerHTML = '';
+        }
+
         // --- Handlers ---
 
         function handleFiles(files) {
@@ -656,6 +695,13 @@
                 if (fname.endsWith('.glb') || fname.endsWith('.vrm') || fname.endsWith('.vci')) {
                     selectedFile = file;
                     
+                    // Reset Logic here
+                    resetMetaFields();
+                    
+                    // Set Output Filename Default
+                    const baseName = file.name.replace(/\.(glb|vrm|vci)$/i, '');
+                    outputFilenameInput.value = baseName;
+
                     dropZone.classList.add('hidden');
                     viewerSection.classList.remove('hidden');
                     actionSection.classList.remove('hidden');
@@ -669,7 +715,7 @@
                     }
 
                     loadModelToScene(file);
-                    inspectFile(file); // Run Inspector
+                    inspectFile(file); // Run Inspector & Fill Meta
                 } else {
                     alert('GLB, VRM, または VCI ファイルを選択してください。');
                 }
@@ -746,8 +792,7 @@
                 
                 if(fileOrBlob instanceof File) {
                     previewFilename.textContent = fileOrBlob.name;
-                    // Only auto-fill meta title if it's not a re-drop of VCI (which might have complex name)
-                    if (!metaTitle.value) metaTitle.value = fileOrBlob.name.replace(/\.(glb|vrm|vci)$/i, '');
+                    // Note: Meta filling moved to inspectFile for better separation
                 }
             }, 
             undefined, 
@@ -811,43 +856,61 @@
 
                 log("JSON構造の解析に成功しました。");
 
-                // VCI Meta Check
+                // --- Apply Meta Data Logic ---
+                let appliedTitle = false;
+
+                // 1. VCI Meta Check & Apply
                 if (json.extensions && json.extensions["VCAST_vci_meta"]) {
                     const meta = json.extensions["VCAST_vci_meta"];
-                    log(`VCAST_vci_meta Ver: ${meta.specVersion || "不明"} (${meta.exporterVCIVersion || "不明"})`, "success");
+                    log(`VCAST_vci_meta Ver: ${meta.specVersion || "不明"}`, "success");
                     
-                    // Check Spec Version
-                    if (meta.specVersion !== "0.43" && meta.specVersion !== "0.4.3") {
-                         log(`警告: specVersion が ${meta.specVersion} です。0.43 が推奨されています。`, "warn");
-                    }
+                    // Apply to UI (Force overwrite since we reset fields in handleFiles)
+                    if (meta.title) { metaTitle.value = meta.title; appliedTitle = true; }
+                    if (meta.version) metaVersion.value = meta.version;
+                    if (meta.author) metaAuthor.value = meta.author;
+                    if (meta.contactInformation) metaContact.value = meta.contactInformation;
+                    if (meta.reference) metaReference.value = meta.reference;
+                    if (meta.description) metaDescription.value = meta.description;
+                    
+                    if (meta.modelDataLicenseType) licenseModelType.value = meta.modelDataLicenseType;
+                    if (meta.modelDataOtherLicenseUrl) licenseModelUrl.value = meta.modelDataOtherLicenseUrl;
+                    if (meta.scriptLicenseType) licenseScriptType.value = meta.scriptLicenseType;
+                    if (meta.scriptOtherLicenseUrl) licenseScriptUrl.value = meta.scriptOtherLicenseUrl;
+                    if (meta.scriptWriteProtected !== undefined) scriptProtected.checked = meta.scriptWriteProtected;
+                    if (meta.scriptEnableDebugging !== undefined) scriptDebugging.checked = meta.scriptEnableDebugging;
 
-                    if (!meta.title) log("警告: Titleが設定されていません。", "warn");
-                    
                     // Thumbnail check
                     if (meta.thumbnail !== undefined && meta.thumbnail !== -1) {
-                        if (json.textures && json.textures[meta.thumbnail]) {
-                            log(`  Thumbnail: Texture Index ${meta.thumbnail} (OK)`);
-                        } else {
-                            log(`  Thumbnail: Texture Index ${meta.thumbnail} (無効な参照)`, "error");
-                        }
-                    } else {
-                        log("  Thumbnail: 設定なし", "info");
+                         // Note: Extracting actual thumbnail image from GLB buffer for preview is complex and skipped here for simplicity.
+                         // We just acknowledge it exists.
+                        log(`  サムネイル設定あり (Index: ${meta.thumbnail})`);
                     }
 
-                } else {
-                    log("情報: VCIメタデータはまだありません。", "info");
-                    // Pre-fill meta if VRM
-                    if(json.extensions && json.extensions.VRM && json.extensions.VRM.meta) {
+                } 
+                
+                // 2. VRM Meta Check (Fallback or VRM input)
+                if (json.extensions && json.extensions.VRM && json.extensions.VRM.meta) {
+                    if (json.extensions["VCAST_vci_meta"]) {
+                        // If VCI meta exists, we prioritize it, but warn about VRM meta
+                         log("警告: extensions.VRM が含まれています。VCI化の際に削除されます。", "warn");
+                    } else {
+                        // VRM input case
                         const vm = json.extensions.VRM.meta;
-                        if(vm.title && !metaTitle.value) metaTitle.value = vm.title;
-                        if(vm.author && !metaAuthor.value) metaAuthor.value = vm.author;
+                        if(vm.title) { metaTitle.value = vm.title; appliedTitle = true; }
+                        if(vm.version) metaVersion.value = vm.version;
+                        if(vm.author) metaAuthor.value = vm.author;
+                        if(vm.contactInformation) metaContact.value = vm.contactInformation;
+                        if(vm.reference) metaReference.value = vm.reference;
+                        if(vm.otherPermissionUrl) metaReference.value = vm.otherPermissionUrl; // VRM specific fallback
+                        
                         log("VRMメタデータを入力フォームに反映しました。", "success");
                     }
                 }
 
-                // VRM Check
-                if (json.extensions && json.extensions.VRM) {
-                    log("警告: extensions.VRM が含まれています。VCI化の際に削除されます。", "warn");
+                // 3. Fallback Title
+                if (!appliedTitle && !metaTitle.value) {
+                    metaTitle.value = file.name.replace(/\.(glb|vrm|vci)$/i, '');
+                    log("ファイル名からタイトルを設定しました。", "info");
                 }
 
             } catch (e) {
@@ -913,8 +976,13 @@
                 const newVciBuffer = rebuildGLB(jsonChunk, binChunk, additionalBin);
                 
                 generatedBlob = new Blob([newVciBuffer], { type: 'application/octet-stream' });
-                generatedFileName = file.name.replace(/\.(glb|vrm|vci)$/i, '.vci');
-                fileInfo.textContent = `${generatedFileName} (${(generatedBlob.size / 1024).toFixed(1)} KB)`;
+                
+                // Use the input value for filename (ensure it ends with .vci)
+                let outName = outputFilenameInput.value.trim() || "converted";
+                if (!outName.toLowerCase().endsWith(".vci")) outName += ".vci";
+                
+                // Update display info
+                fileInfo.textContent = `${outName} (${(generatedBlob.size / 1024).toFixed(1)} KB)`;
                 
                 resultSection.classList.remove('hidden');
                 log("変換完了！ 下記からダウンロードできます", "success");
@@ -1273,10 +1341,14 @@
                 alert("ファイルが生成されていません。変換を実行してください。");
                 return;
             }
+            // Use the input value here
+            let outName = outputFilenameInput.value.trim() || "converted";
+            if (!outName.toLowerCase().endsWith(".vci")) outName += ".vci";
+
             const url = URL.createObjectURL(generatedBlob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = generatedFileName;
+            a.download = outName;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
