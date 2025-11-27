@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VRM/GLB to VCI Converter (v5.6)</title>
+    <title>VRM/GLB to VCI Converter (v5.9)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -78,9 +78,10 @@
 <body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
 
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.6 (Meta Refresh & Rename)</span></h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.9 (Robust Fix)</span></h1>
         <p class="text-gray-600 mb-6 text-sm">
-            VRM/GLBをVCI(Spec 0.43)に変換します。スケールは格納ノード、高さはルートノードに適用されます。
+            VRM/GLBをVCI(Spec 0.43)に変換します。スケールは格納ノード、高さはルートノードに適用されます。<br>
+            <span class="text-red-500 text-xs font-bold">※修正: VCI再変換時のマテリアル補正適用 / VRM変換時の設定消失バグ修正</span>
         </p>
 
         <!-- 1. Upload & Viewer Zone -->
@@ -998,25 +999,29 @@
         }
 
         function modifyJsonForVCI(json, thumbBuffer, thumbMime, originalBinLength) {
-            // --- VRM Check & Cleanup Setup ---
+            // --- 1. Extract VRM/VCI Data BEFORE Deletion/Modification ---
             const isVRM = json.extensions && json.extensions.VRM;
-            let vrmTitle = "";
-            let vrmAuthor = "";
-            if (isVRM && json.extensions.VRM.meta) {
-                vrmTitle = json.extensions.VRM.meta.title || "";
-                vrmAuthor = json.extensions.VRM.meta.author || "";
+            const isVCI = json.extensions && json.extensions["VCAST_vci_material_unity"];
+            let savedVRM = null;
+            let savedVCIMaterials = null;
+
+            // Save VRM Data
+            if (isVRM) {
+                savedVRM = JSON.parse(JSON.stringify(json.extensions.VRM)); // Deep copy to preserve
+                // We don't delete yet. We need it for material generation.
             }
 
-            // --- VRM Cleanup Execution ---
-            if (isVRM) {
-                delete json.extensions.VRM;
-                if (Array.isArray(json.extensionsUsed)) {
-                    json.extensionsUsed = json.extensionsUsed.filter(e => e !== "VRM");
-                }
-                if (Array.isArray(json.extensionsRequired)) {
-                    json.extensionsRequired = json.extensionsRequired.filter(e => e !== "VRM");
-                }
-                log("VRM拡張を削除しました (extensions.VRM removed)", "warn");
+            // Save Existing VCI Materials (if re-converting VCI)
+            if (isVCI) {
+                savedVCIMaterials = json.extensions["VCAST_vci_material_unity"];
+            }
+
+            // --- 2. Meta Data Setup ---
+            let vrmTitle = "";
+            let vrmAuthor = "";
+            if (savedVRM && savedVRM.meta) {
+                vrmTitle = savedVRM.meta.title || "";
+                vrmAuthor = savedVRM.meta.author || "";
             }
 
             const settingTitle = metaTitle.value || vrmTitle || "Converted VCI";
@@ -1033,32 +1038,33 @@
             const settingScriptProtected = scriptProtected.checked;
             const settingScriptDebugging = scriptDebugging.checked;
 
-            const settingScale = parseFloat(scaleInput.value) || 1.0; // Get slider scale
-            const settingHeight = parseFloat(heightInput.value) || 0.0; // Get slider height
+            const settingScale = parseFloat(scaleInput.value) || 1.0; 
+            const settingHeight = parseFloat(heightInput.value) || 0.0;
             const settingLayer = layerSelect.value;
             const layerMap = { "Default": "default", "VCIAccessory": "accessory", "VCIItem": "item", "VCIPickUp": "pickup", "Location": "location" };
             const colliderLayerKey = layerMap[settingLayer] || "default";
             const settingAttractable = attractableToggle.checked;
 
-            // Viewer Fix (glTF Standard Materials)
-            let gltfFixCount = 0;
-            if (json.extensions && json.extensions.VRM && Array.isArray(json.extensions.VRM.materialProperties) && Array.isArray(json.materials)) {
-                const vrmMats = json.extensions.VRM.materialProperties;
-                json.materials.forEach((mat, idx) => {
-                    const mp = vrmMats[idx];
-                    if (!mp || !mp.floatProperties) return;
-                    const f = mp.floatProperties;
-                    if (f._BlendMode == 2 && f._ZWrite == 0) {
-                        mat.alphaMode = "MASK";
-                        const cutoff = (typeof f._Cutoff == "number") ? f._Cutoff : 0.5;
-                        if (mat.alphaCutoff == null) mat.alphaCutoff = cutoff;
-                        gltfFixCount++;
-                    }
-                });
-            }
-            if(gltfFixCount > 0) log(`Webプレビュー用: ${gltfFixCount}個のマテリアル補正`);
+            // --- 3. Material Fix & Generation (Crucial Step) ---
+            // We do this BEFORE deleting VRM extension so we can read props
+            fixAndGenerateMaterials(json, savedVRM, savedVCIMaterials);
 
-            // Thumbnail
+            // --- 4. Cleanup VRM Extension (Now safe to delete) ---
+            if (isVRM) {
+                delete json.extensions.VRM;
+                if (Array.isArray(json.extensionsUsed)) {
+                    json.extensionsUsed = json.extensionsUsed.filter(e => e !== "VRM");
+                }
+                if (Array.isArray(json.extensionsRequired)) {
+                    json.extensionsRequired = json.extensionsRequired.filter(e => e !== "VRM");
+                }
+                log("VRM拡張を削除しました (extensions.VRM removed)", "warn");
+            }
+
+            // Viewer Fix (glTF Standard Materials) - Redundant but safe to keep for Three.js preview if we re-loaded
+            // (Skipped as we already modified materials in fixAndGenerateMaterials)
+
+            // --- 5. Thumbnail ---
             let thumbTextureIndex = -1;
             let additionalBin = null;
             if (thumbBuffer && thumbMime) {
@@ -1078,10 +1084,10 @@
                 log("サムネイル画像を埋め込みました");
             }
 
-            // Meta (Updated to 0.43)
+            // --- 6. VCI Meta Construction ---
             json.extensions = json.extensions || {};
             json.extensions["VCAST_vci_meta"] = {
-                exporterVCIVersion: "UniVCI-0.43", // Change to UniVCI format to fix int.Parse error
+                exporterVCIVersion: "UniVCI-0.43", 
                 specVersion: "0.43",
                 version: "1",
                 title: settingTitle,
@@ -1104,40 +1110,10 @@
                 if(!json.extensionsUsed.includes(e)) json.extensionsUsed.push(e);
             });
 
-            // --- RESTRUCTURE NODE HIERARCHY ---
+            // --- 7. Node Hierarchy Restructuring (Auto-Center Logic) ---
             const originalRootNodes = json.scenes[0].nodes.slice(); 
 
-            // Container Node (Model Content) gets the Scale ONLY (Height moved to root)
-            const containerNodeIndex = json.nodes.length;
-            const containerNode = {
-                name: settingTitle || "Model", 
-                children: originalRootNodes,
-                translation: [0, 0, 0], // Height removed from here
-                rotation: [0, 0, 0, 1],
-                scale: [settingScale, settingScale, settingScale] // Scale remains here
-            };
-            json.nodes.push(containerNode);
-
-            // SubItem Node (root) gets Height
-            const subItemNodeIndex = json.nodes.length;
-            const subItemNode = {
-                name: "root",
-                children: [containerNodeIndex], 
-                translation: [0, settingHeight, 0], // Height applied here
-                rotation: [0, 0, 0, 1],
-                scale: [1, 1, 1], 
-                extensions: {
-                    "VCAST_vci_item": {
-                        grabbable: true,
-                        scalable: scalingToggle.checked,
-                        uniformScaling: uniformScalingToggle.checked,
-                        attractable: settingAttractable,
-                        groupId: 0
-                    }
-                }
-            };
-
-            // Collider Calculation (Must apply scale/offset to root collider)
+            // Calculate Bounding Box Logic
             let meshNodeIndex = -1;
             function findMeshIndex(indices) {
                 for (let i of indices) {
@@ -1152,30 +1128,63 @@
             meshNodeIndex = findMeshIndex(originalRootNodes);
 
             let center = [0,0,0], size = [0.1,0.1,0.1];
+            let offsetCorrection = [0,0,0];
+
             if (meshNodeIndex >= 0) {
                 const meshNode = json.nodes[meshNodeIndex];
                 const mesh = json.meshes[meshNode.mesh];
                 if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
                     const acc = json.accessors[mesh.primitives[0].attributes.POSITION];
                     if (acc.min && acc.max) {
-                        // Original mesh local bounds
                         center = [(acc.min[0]+acc.max[0])/2, (acc.min[1]+acc.max[1])/2, (acc.min[2]+acc.max[2])/2];
                         size = [Math.abs(acc.max[0]-acc.min[0]), Math.abs(acc.max[1]-acc.min[1]), Math.abs(acc.max[2]-acc.min[2])];
+                        
                         if (meshNode.scale) { for(let i=0; i<3; i++) { size[i] *= meshNode.scale[i]; center[i] *= meshNode.scale[i]; } }
                         if (meshNode.translation) { for(let i=0; i<3; i++) center[i] += meshNode.translation[i]; }
                         
-                        // Apply Container Transform to these values for the Root Collider
-                        for(let i=0; i<3; i++) {
-                            size[i] *= settingScale;
-                            center[i] *= settingScale;
-                        }
-                        // center[1] += settingHeight; // Height moved to root, so local collider offset is 0 relative to mesh
+                        // Auto-Center Logic
+                        offsetCorrection[0] = -center[0] * settingScale;
+                        offsetCorrection[1] = - (center[1] - size[1]/2) * settingScale;
+                        offsetCorrection[2] = -center[2] * settingScale;
+
+                        log(`原点補正: Offset [${offsetCorrection[0].toFixed(2)}, ${offsetCorrection[1].toFixed(2)}, ${offsetCorrection[2].toFixed(2)}]`);
                     }
                 }
             }
 
+            const containerNodeIndex = json.nodes.length;
+            const containerNode = {
+                name: settingTitle || "Model", 
+                children: originalRootNodes,
+                translation: offsetCorrection, 
+                rotation: [0, 0, 0, 1],
+                scale: [settingScale, settingScale, settingScale]
+            };
+            json.nodes.push(containerNode);
+
+            const subItemNodeIndex = json.nodes.length;
+            const subItemNode = {
+                name: "root",
+                children: [containerNodeIndex], 
+                translation: [0, settingHeight, 0], 
+                rotation: [0, 0, 0, 1],
+                scale: [1, 1, 1], 
+                extensions: {
+                    "VCAST_vci_item": {
+                        grabbable: true,
+                        scalable: scalingToggle.checked,
+                        uniformScaling: uniformScalingToggle.checked,
+                        attractable: settingAttractable,
+                        groupId: 0
+                    }
+                }
+            };
+
+            let colliderCenter = [0, size[1]/2 * settingScale, 0]; 
+            let colliderSize = [size[0] * settingScale, size[1] * settingScale, size[2] * settingScale];
+
             subItemNode.extensions["VCAST_vci_collider"] = {
-                colliders: [{ type: "box", layer: colliderLayerKey, center: center, shape: size, isTrigger: triggerToggle.checked }]
+                colliders: [{ type: "box", layer: colliderLayerKey, center: colliderCenter, shape: colliderSize, isTrigger: triggerToggle.checked }]
             };
 
             subItemNode.extensions["VCAST_vci_rigidbody"] = {
@@ -1190,17 +1199,14 @@
 
             json.nodes.push(subItemNode);
 
-            // --- RECURSIVE COLLIDER LAYER APPLICATION ---
+            // Recursive Collider (unchanged logic)
             function addColliderToNode(nodeIndex) {
                 const node = json.nodes[nodeIndex];
-                
                 node.extensions = node.extensions || {};
                 if (node.extensions["VCAST_vci_collider"]) return; 
-
                 let localCenter = [0,0,0];
                 let localSize = [0.01,0.01,0.01]; 
                 let isTrigger = true;
-
                 if (node.mesh !== undefined) {
                     const mesh = json.meshes[node.mesh];
                     if (mesh.primitives && mesh.primitives[0] && mesh.primitives[0].attributes.POSITION !== undefined) {
@@ -1212,40 +1218,65 @@
                     }
                     isTrigger = triggerToggle.checked;
                 }
-
                 node.extensions["VCAST_vci_collider"] = {
-                    colliders: [{ 
-                        type: "box", 
-                        layer: colliderLayerKey, 
-                        center: localCenter, 
-                        shape: localSize,    
-                        isTrigger: isTrigger 
-                    }]
+                    colliders: [{ type: "box", layer: colliderLayerKey, center: localCenter, shape: localSize, isTrigger: isTrigger }]
                 };
-
                 if (node.children && node.children.length > 0) {
                     node.children.forEach(childIndex => addColliderToNode(childIndex));
                 }
             }
-
             addColliderToNode(containerNodeIndex);
 
             json.scenes[0].nodes = [subItemNodeIndex];
-            
-            addUnityMaterialExtension(json);
             return additionalBin;
         }
 
-        function addUnityMaterialExtension(json) {
+        // --- New Robust Material Fixer ---
+        function fixAndGenerateMaterials(json, savedVRM, savedVCIMaterials) {
             json.extensions = json.extensions || {};
-            if (json.extensions["VCAST_vci_material_unity"]) return;
-
             let unityMats = [];
             let fixedCount = 0;
 
-            if (json.extensions && json.extensions.VRM && Array.isArray(json.extensions.VRM.materialProperties)) {
-                log("VRM拡張データを確認しました...");
-                const vrmMats = json.extensions.VRM.materialProperties;
+            // Case A: Re-converting a VCI (VCAST_vci_material_unity exists)
+            // We want to scan it and fix Transparent materials.
+            if (savedVCIMaterials && savedVCIMaterials.materials) {
+                log("既存のVCIマテリアル設定を検出・補正します...");
+                unityMats = savedVCIMaterials.materials.map((mat, idx) => {
+                    const mp = Object.assign({}, mat); // Clone
+                    const floatProps = mp.floatProperties || {};
+                    
+                    // Fix: If BLEND mode (2) OR alphaMode in standard glTF is 'BLEND', force Cutout
+                    const gltfMat = json.materials[idx] || {};
+                    const isTransparent = (floatProps._BlendMode == 2) || (gltfMat.alphaMode === 'BLEND');
+
+                    if (isTransparent) {
+                        log(`  [VCI補正] ${mp.name || idx}: Transparent -> Cutout に強制変更`);
+                        
+                        // 1. Fix Unity Props
+                        if(!mp.floatProperties) mp.floatProperties = {};
+                        mp.floatProperties._BlendMode = 1; // Cutout
+                        mp.floatProperties._ZWrite = 1;    // On
+                        if (mp.floatProperties._Cutoff == null) mp.floatProperties._Cutoff = 0.5;
+                        mp.renderQueue = 2450;
+                        
+                        if(!mp.keywordMap) mp.keywordMap = {};
+                        mp.keywordMap._ALPHATEST_ON = true;
+                        delete mp.keywordMap._ALPHABLEND_ON;
+                        delete mp.keywordMap._ALPHAPREMULTIPLY_ON;
+
+                        // 2. Fix Standard glTF Props (Sync)
+                        gltfMat.alphaMode = 'MASK';
+                        gltfMat.alphaCutoff = 0.5;
+                        
+                        fixedCount++;
+                    }
+                    return mp;
+                });
+            }
+            // Case B: Converting from VRM (Using savedVRM)
+            else if (savedVRM && Array.isArray(savedVRM.materialProperties)) {
+                log("VRMマテリアル設定を変換・補正します...");
+                const vrmMats = savedVRM.materialProperties;
                 const gltfMats = json.materials || [];
 
                 unityMats = vrmMats.map((src, idx) => {
@@ -1256,15 +1287,24 @@
                     const keywordMap = Object.assign({}, mp.keywordMap || {});
                     const tagMap = Object.assign({}, mp.tagMap || {});
 
-                    if (floatProps._BlendMode == 2 && floatProps._ZWrite == 0) {
-                        log(`  [修正] ${mp.name || idx}: Transparent -> Cutout に変更`);
-                        floatProps._BlendMode = 1; 
-                        floatProps._ZWrite = 1;
+                    // Detect Transparency
+                    const gltfMat = gltfMats[idx] || {};
+                    const isTransparent = (floatProps._BlendMode == 2) || (gltfMat.alphaMode === 'BLEND');
+
+                    if (isTransparent) {
+                        log(`  [VRM補正] ${mp.name || idx}: Transparent -> Cutout に強制変更`);
+                        floatProps._BlendMode = 1; // Cutout
+                        floatProps._ZWrite = 1;    // On
                         if (floatProps._Cutoff == null) floatProps._Cutoff = 0.5;
-                        mp.renderQueue = (typeof mp.renderQueue == "number") ? mp.renderQueue : 2450;
+                        mp.renderQueue = 2450; 
                         keywordMap._ALPHATEST_ON = true;
                         delete keywordMap._ALPHABLEND_ON;
                         delete keywordMap._ALPHAPREMULTIPLY_ON;
+                        
+                        // Sync Standard glTF
+                        gltfMat.alphaMode = 'MASK';
+                        gltfMat.alphaCutoff = 0.5;
+                        
                         fixedCount++;
                     }
 
@@ -1276,16 +1316,29 @@
                         textureProperties: texProps, keywordMap: keywordMap, tagMap: tagMap
                     };
                 });
-                log(`VCI用: 合計 ${fixedCount} 個のマテリアルを補正しました`);
-            } else {
-                log("VRM拡張が見つかりません。標準変換を行います。");
-                const materials = json.materials || [];
-                unityMats = materials.map((m, i) => ({
-                    name: m.name || `material_${i}`,
-                    shader: "VRM_USE_GLTFSHADER", renderQueue: 2000,
-                    floatProperties: {}, vectorProperties: {}, textureProperties: {}, keywordMap: {}, tagMap: {}
-                }));
             }
+            // Case C: Plain GLB (No VRM/VCI extensions)
+            else {
+                log("標準GLBマテリアルを変換します...");
+                const materials = json.materials || [];
+                unityMats = materials.map((m, i) => {
+                    // Check standard transparency
+                    if (m.alphaMode === 'BLEND') {
+                        log(`  [GLB補正] ${m.name || i}: BLEND -> MASK に変更`);
+                        m.alphaMode = 'MASK';
+                        m.alphaCutoff = 0.5;
+                    }
+                    
+                    return {
+                        name: m.name || `material_${i}`,
+                        shader: "VRM_USE_GLTFSHADER", 
+                        renderQueue: (m.alphaMode === 'MASK') ? 2450 : 2000,
+                        floatProperties: {}, vectorProperties: {}, textureProperties: {}, keywordMap: {}, tagMap: {}
+                    };
+                });
+            }
+
+            log(`合計 ${fixedCount} 個のマテリアルを透過修正しました`);
             json.extensions["VCAST_vci_material_unity"] = { materials: unityMats };
         }
 
