@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VRM/GLB to VCI Converter (v5.9)</title>
+    <title>VRM/GLB to VCI Converter (v5.9.2)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -78,10 +78,10 @@
 <body class="bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4">
 
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-5xl">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.9 (Robust Fix)</span></h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">VRM/GLB to VCI Converter <span class="text-sm font-normal text-purple-600 bg-purple-100 px-2 py-1 rounded ml-2">v5.9.2 (Camera Mask UI)</span></h1>
         <p class="text-gray-600 mb-6 text-sm">
             VRM/GLBをVCI(Spec 0.43)に変換します。スケールは格納ノード、高さはルートノードに適用されます。<br>
-            <span class="text-red-500 text-xs font-bold">※修正: VCI再変換時のマテリアル補正適用 / VRM変換時の設定消失バグ修正</span>
+            <span class="text-red-500 text-xs font-bold">※機能追加: Camera Mask (IsVisibleToCamera) 設定の追加</span>
         </p>
 
         <!-- 1. Upload & Viewer Zone -->
@@ -358,6 +358,16 @@
                                     <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
                                 </div>
                             </label>
+
+                            <!-- Visible To Camera: Default ON -->
+                            <label class="flex items-center cursor-pointer justify-between bg-white px-2 py-1 rounded border border-blue-100 relative z-10">
+                                <span class="text-xs text-gray-600">Is Visible To Camera</span>
+                                <div class="relative w-8 h-4">
+                                    <input type="checkbox" id="visible-toggle" class="sr-only" checked>
+                                    <div class="w-full h-full bg-gray-300 rounded-full shadow-inner transition-colors duration-200 ease-in-out check-bg"></div>
+                                    <div class="dot absolute w-2 h-2 bg-white rounded-full shadow left-1 top-1 transition-transform duration-200 ease-in-out"></div>
+                                </div>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -442,6 +452,7 @@
         const gravityToggle = document.getElementById('gravity-toggle');
         const triggerToggle = document.getElementById('trigger-toggle');
         const attractableToggle = document.getElementById('attractable-toggle');
+        const visibleToggle = document.getElementById('visible-toggle');
         
         // Transform Controls
         const scaleSlider = document.getElementById('scale-slider');
@@ -1044,6 +1055,8 @@
             const layerMap = { "Default": "default", "VCIAccessory": "accessory", "VCIItem": "item", "VCIPickUp": "pickup", "Location": "location" };
             const colliderLayerKey = layerMap[settingLayer] || "default";
             const settingAttractable = attractableToggle.checked;
+            
+            const settingIsVisible = visibleToggle.checked;
 
             // --- 3. Material Fix & Generation (Crucial Step) ---
             // We do this BEFORE deleting VRM extension so we can read props
@@ -1175,7 +1188,9 @@
                         scalable: scalingToggle.checked,
                         uniformScaling: uniformScalingToggle.checked,
                         attractable: settingAttractable,
-                        groupId: 0
+                        attractableDistance: 20.0,
+                        groupId: 0,
+                        isVisibleToCamera: settingIsVisible
                     }
                 }
             };
